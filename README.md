@@ -443,9 +443,49 @@ public class Order
 | Tables | `table` `thead` `tbody` `tfoot` `tr` `th` `td` `caption`, `colspan`, `rowspan`, cell `bgcolor` / `background-color`, `valign` |
 | Links | `http(s)`, `mailto`, `tel` and `#bookmark` links. Other schemes (e.g. `javascript:`) are rendered as plain text |
 | Images | `data:image/...;base64,...` URIs with optional `width` / `height`. Remote images are **not downloaded**, their `alt` text is shown |
-| Inline CSS | `color`, `background-color`, `font-weight`, `font-style`, `font-size`, `font-family`, `text-decoration`, `vertical-align`, `text-transform: uppercase`, `text-align`, `margin-left`, `padding-left`, `text-indent`, `page-break-before/after`, `display: none` |
+| Inline CSS | `color`, `background-color`, `font-weight`, `font-style`, `font-size`, `font-family`, `text-decoration`, `vertical-align`, `text-transform: uppercase`, `text-align`, `margin-left`, `padding-left`, `text-indent`, `page-break-before/after: always`, `break-before/after: page`, `break-inside: avoid` / `page-break-inside: avoid`, `break-after: avoid` / `page-break-after: avoid`, `display: none` |
 
 `<script>`, `<style>`, form controls and other non-content elements are ignored. Malformed HTML is parsed like a browser would parse it.
+
+#### Page breaks and keeping entries together
+
+Page layout is calculated by Word when the document is displayed, so the templater cannot know where a page ends. Instead, the CSS break properties are translated into Word's pagination settings, which Word applies to the real page size:
+
+| CSS | Word setting | Effect |
+|-----|--------------|--------|
+| `break-inside: avoid` (or `page-break-inside: avoid`) | *Keep lines together* on every paragraph, *Keep with next* on all but the last, table rows *can't split* | The element is never split across pages. If it does not fit, it moves to the next page as a whole |
+| `break-after: avoid` (or `page-break-after: avoid`) | *Keep with next* on the last paragraph | The element stays on the same page as the content that follows |
+| `break-before: page` (or `page-break-before: always`) | *Page break before* | The element starts on a new page |
+| `break-after: page` (or `page-break-after: always`) | *Page break before* on the next paragraph | The following content starts on a new page |
+
+These apply to block elements: `div`, `p`, headings, `blockquote`, `pre`, `table`, `ul`/`ol` and `li`. Headings are always kept with the paragraph that follows.
+
+Example: a list of entries of different length (a title plus a few lines of description). Each entry is either entirely on one page or pushed to the next page, never split:
+```csharp
+var applications = new[]
+{
+    new { Title = "Inventory Manager", Description = "Tracks stock levels across warehouses.<br>Built with ASP.NET Core and PostgreSQL.<br>Used daily by 40 people." },
+    new { Title = "Report Generator", Description = "Creates monthly PDF and DOCX reports from templates." },
+};
+
+var html = string.Concat(applications.Select(app => $"""
+    <div style="break-inside: avoid">
+      <p><b>{app.Title}</b></p>
+      <p>{app.Description}</p>
+    </div>
+    """));
+
+template.BindModel("ds", new { Applications = html });
+```
+Template:
+```
+{{ds.Applications}:html}
+```
+For the gap between entries, give the template paragraph (or its style) *Spacing After* instead of adding empty paragraphs: spacing is dropped at a page break, but an empty paragraph can end up alone at the top of a page.
+
+> Remember to HTML-encode user-provided values (e.g. `System.Net.WebUtility.HtmlEncode(app.Title)`) when building HTML strings.
+
+The same can be achieved without HTML directly in the template - see [Page Breaks and Keeping Content Together](#page-breaks-and-keeping-content-together).
 
 #### Styles
 
@@ -583,6 +623,54 @@ A tag that is not a placeholder - or whose placeholder is a block directive such
 
 > [!NOTE]
 > Content control tag bindings are not reported by `GetTemplateSchema()` (the tag is not part of the rendered text). This is the same limitation as sub-template formatters.
+
+---
+## Page Breaks and Keeping Content Together
+
+Where a page ends is decided by Word when the document is laid out, and it depends on fonts, page size and even the Word version. Don't count lines or insert blank lines to push content to the next page. Use Word's pagination settings in the template instead (**Paragraph → Line and Page Breaks**). They are kept by the templater and copied into every loop iteration:
+
+| Setting | Effect |
+|---------|--------|
+| **Page break before** | The paragraph always starts on a new page |
+| **Keep with next** | The paragraph stays on the same page as the next paragraph |
+| **Keep lines together** | The paragraph is never split across two pages |
+
+#### Example: never split an entry of a list
+
+A list of entries, each with a title and a description of varying length:
+```
+{{#ds.Applications}}
+{{.Title}}
+{{.Description}}
+{{/ds.Applications}}
+```
+- Title paragraph: tick **Keep with next** and **Keep lines together**
+- Description paragraph: tick **Keep lines together**
+
+```csharp
+template.BindModel("ds", new
+{
+    Applications = new[]
+    {
+        new { Title = "Inventory Manager", Description = "Tracks stock levels across warehouses.\nBuilt with ASP.NET Core.\nUsed daily by 40 people." },
+        new { Title = "Report Generator", Description = "Creates monthly PDF and DOCX reports from templates." },
+    }
+});
+```
+If an entry does not fit at the bottom of a page, Word moves the whole entry to the next page. Line breaks (`\n`) in the description become line breaks inside the same paragraph, so they are covered by *Keep lines together*. If an entry spans several paragraphs, tick *Keep with next* on all of them except the last. Use *Spacing After* for the gap between entries rather than an empty paragraph.
+
+For entries in a table row, untick **Table Properties → Row → Allow row to break across pages** instead.
+
+#### Forcing a page break from the template
+
+`{{:PageBreak}}` inserts a page break at its position, and it can be conditional:
+```
+...last sentence of the first part.{?{ds.StartOnNewPage}}{{:PageBreak}}{{/}}
+This paragraph starts on the next page.
+```
+Because the break is inside the first paragraph, Word may show an empty line at the top of the new page. If the paragraph should *always* start on a new page, *Page break before* is the cleaner option. `{{:SectionBreak}}` starts a new section on the next page (for different headers, footers or orientation).
+
+For HTML content, use the CSS `break-inside`, `break-after` and `break-before` properties - see [HTML Formatter](#page-breaks-and-keeping-entries-together).
 
 ---
 ## Whitespace Trimming Around Directives

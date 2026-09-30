@@ -211,6 +211,10 @@ namespace DocxTemplater.Html
             {
                 targetProperties.KeepNext = (KeepNext)sourceProperties.KeepNext.CloneNode(true);
             }
+            if (sourceProperties.KeepLines != null)
+            {
+                targetProperties.KeepLines = (KeepLines)sourceProperties.KeepLines.CloneNode(true);
+            }
             if (sourceProperties.OutlineLevel != null)
             {
                 targetProperties.OutlineLevel = (OutlineLevel)sourceProperties.OutlineLevel.CloneNode(true);

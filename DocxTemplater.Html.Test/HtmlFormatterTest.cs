@@ -297,6 +297,70 @@ namespace DocxTemplater.Html.Test
         }
 
         [Test]
+        public void BreakInsideAvoidKeepsEntryOnOnePage()
+        {
+            var html = """
+                       <div style="break-inside: avoid"><p><b>App one</b></p><p>line 1<br>line 2</p><p>line 3</p></div>
+                       <div style="page-break-inside: avoid"><p><b>App two</b></p><p>description</p></div>
+                       <p>unrelated</p>
+                       """;
+            var body = Render("{{ds}:html}", html);
+
+            var paragraphs = body.Elements<Paragraph>().ToList();
+            Assert.That(paragraphs.Select(p => p.InnerText), Is.EqualTo((string[])["App one", "line 1line 2", "line 3", "App two", "description", "unrelated"]));
+            bool KeepNext(int i)
+            {
+                return paragraphs[i].ParagraphProperties?.KeepNext != null;
+            }
+
+            bool KeepLines(int i)
+            {
+                return paragraphs[i].ParagraphProperties?.KeepLines != null;
+            }
+
+            // the first paragraph is merged into the template paragraph - its keep options must survive
+            Assert.That(KeepNext(0) && KeepLines(0), Is.True);
+            Assert.That(KeepNext(1) && KeepLines(1), Is.True);
+            Assert.That(!KeepNext(2) && KeepLines(2), Is.True, "the last paragraph of an entry ends the chain");
+            Assert.That(KeepNext(3) && KeepLines(3), Is.True);
+            Assert.That(!KeepNext(4) && KeepLines(4), Is.True);
+            Assert.That(!KeepNext(5) && !KeepLines(5), Is.True, "content outside the entries is unaffected");
+        }
+
+        [Test]
+        public void BreakAfterAvoidKeepsParagraphWithNext()
+        {
+            var body = Render("{{ds}:html}", "<p style=\"break-after: avoid\">title</p><p>text</p>");
+
+            var paragraphs = body.Elements<Paragraph>().ToList();
+            Assert.That(paragraphs[0].ParagraphProperties.KeepNext, Is.Not.Null);
+            Assert.That(paragraphs[0].ParagraphProperties.KeepLines, Is.Null);
+            Assert.That(paragraphs[1].ParagraphProperties?.KeepNext, Is.Null);
+        }
+
+        [Test]
+        public void BreakInsideAvoidOnTableAndListItem()
+        {
+            var html = """
+                       <table style="break-inside: avoid"><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>
+                       <ul><li style="break-inside: avoid"><p>item</p><p>more</p></li><li>other</li></ul>
+                       """;
+            var body = Render("{{ds}:html}", html);
+
+            var rows = body.Elements<Table>().Single().Elements<TableRow>().ToList();
+            Assert.That(rows.All(r => r.TableRowProperties?.GetFirstChild<CantSplit>() != null), "rows must not split");
+            Assert.That(rows[0].Descendants<Paragraph>().All(p => p.ParagraphProperties.KeepNext != null), "all rows but the last keep with the next row");
+            Assert.That(rows[1].Descendants<Paragraph>().All(p => p.ParagraphProperties.KeepNext == null), "the table is not chained to the following content");
+
+            var listParagraphs = body.Elements<Paragraph>().ToList();
+            Assert.That(listParagraphs.Select(p => p.InnerText), Is.EqualTo((string[])["item", "more", "other"]));
+            Assert.That(listParagraphs[0].ParagraphProperties.KeepNext, Is.Not.Null);
+            Assert.That(listParagraphs[1].ParagraphProperties.KeepNext, Is.Null);
+            Assert.That(listParagraphs[1].ParagraphProperties.KeepLines, Is.Not.Null);
+            Assert.That(listParagraphs[2].ParagraphProperties.KeepLines, Is.Null);
+        }
+
+        [Test]
         public void EmptyHtmlRemovesPlaceholder()
         {
             var body = Render("before {{ds}:html} after", "");

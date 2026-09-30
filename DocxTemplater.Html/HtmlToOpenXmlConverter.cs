@@ -139,6 +139,16 @@ namespace DocxTemplater.Html
                 m_pageBreakPending = true;
             }
 
+            var keepTogether = IsBreakAvoided(css, "page-break-inside", "break-inside");
+            var keepWithNext = IsBreakAvoided(css, "page-break-after", "break-after");
+            var applyKeepOptions = (keepTogether || keepWithNext) && IsBlockLevel(tag);
+            var firstElementIndex = 0;
+            if (applyKeepOptions)
+            {
+                FinishParagraph();
+                firstElementIndex = m_container.ChildElements.Count;
+            }
+
             switch (tag)
             {
                 case "br":
@@ -196,10 +206,75 @@ namespace DocxTemplater.Html
                     break;
             }
 
+            if (applyKeepOptions)
+            {
+                FinishParagraph();
+                ApplyKeepOptions(firstElementIndex, keepTogether, keepWithNext);
+            }
+
             if (pageBreakAfter)
             {
                 FinishParagraph();
                 m_pageBreakPending = true;
+            }
+        }
+
+        private static bool IsBlockLevel(string tag)
+        {
+            return BlockElements.Contains(tag) || tag is "table" or "ul" or "ol" or "blockquote" or "pre"
+                or "h1" or "h2" or "h3" or "h4" or "h5" or "h6";
+        }
+
+        /// <summary>
+        /// Maps css <c>break-inside: avoid</c> and <c>break-after: avoid</c> to Word's "keep lines together" and
+        /// "keep with next" for everything an element produced (the container children from <paramref name="firstElementIndex"/>).
+        /// Keeping a block together means: no page break inside a paragraph (keepLines), every paragraph but the last
+        /// stays with the following one (keepNext) and table rows do not split (cantSplit).
+        /// </summary>
+        private void ApplyKeepOptions(int firstElementIndex, bool keepTogether, bool keepWithNext)
+        {
+            var elements = m_container.ChildElements.Skip(firstElementIndex).ToList();
+            if (elements.Count == 0)
+            {
+                return;
+            }
+
+            // the paragraphs that end the block - for a closing table all paragraphs of its last row,
+            // chaining them to the next paragraph would keep the table together with what follows
+            var lastElement = elements[^1];
+            var endParagraphs = lastElement is Table lastTable
+                ? lastTable.Elements<TableRow>().LastOrDefault()?.Descendants<Paragraph>().ToHashSet() ?? []
+                : new HashSet<Paragraph> { lastElement as Paragraph ?? lastElement.Descendants<Paragraph>().Last() };
+
+            if (keepTogether)
+            {
+                foreach (var row in elements.SelectMany(x => x.Descendants<TableRow>()))
+                {
+                    row.TableRowProperties ??= new TableRowProperties();
+                    if (row.TableRowProperties.GetFirstChild<CantSplit>() == null)
+                    {
+                        row.TableRowProperties.AppendChild(new CantSplit());
+                    }
+                }
+
+                var paragraphs = elements.SelectMany(x => x is Paragraph paragraph ? [paragraph] : x.Descendants<Paragraph>());
+                foreach (var paragraph in paragraphs)
+                {
+                    var properties = paragraph.ParagraphProperties ??= new ParagraphProperties();
+                    properties.KeepLines = new KeepLines();
+                    if (!endParagraphs.Contains(paragraph))
+                    {
+                        properties.KeepNext = new KeepNext();
+                    }
+                }
+            }
+
+            if (keepWithNext)
+            {
+                foreach (var paragraph in endParagraphs)
+                {
+                    (paragraph.ParagraphProperties ??= new ParagraphProperties()).KeepNext = new KeepNext();
+                }
             }
         }
 
@@ -867,6 +942,12 @@ namespace DocxTemplater.Html
             };
         }
 
+        private static bool IsBreakAvoided(Dictionary<string, string> css, string legacyName, string name)
+        {
+            return (css.TryGetValue(legacyName, out var legacy) && legacy.Trim().Equals("avoid", StringComparison.OrdinalIgnoreCase))
+                   || (css.TryGetValue(name, out var value) && value.Trim().ToLowerInvariant() is "avoid" or "avoid-page");
+        }
+
         private static bool IsPageBreak(Dictionary<string, string> css, string legacyName, string name)
         {
             return (css.TryGetValue(legacyName, out var legacy) && legacy.Trim().Equals("always", StringComparison.OrdinalIgnoreCase))
@@ -1026,6 +1107,10 @@ namespace DocxTemplater.Html
                 return;
             }
 
+            var keepTogether = IsBreakAvoided(css, "page-break-inside", "break-inside");
+            var keepWithNext = IsBreakAvoided(css, "page-break-after", "break-after");
+            var firstElementIndex = m_container.ChildElements.Count;
+
             var listItem = new ListItemState(numberingId, level);
             var block = m_blockFormats.Peek() with { ListItem = listItem, IsPlain = false, StyleId = null };
             m_blockFormats.Push(ApplyBlockCss(item, css, block));
@@ -1039,6 +1124,10 @@ namespace DocxTemplater.Html
                     EnsureParagraph();
                 }
                 FinishParagraph();
+                if (keepTogether || keepWithNext)
+                {
+                    ApplyKeepOptions(firstElementIndex, keepTogether, keepWithNext);
+                }
             }
             finally
             {
