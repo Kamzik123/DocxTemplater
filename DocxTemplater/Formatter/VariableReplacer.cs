@@ -12,6 +12,7 @@ namespace DocxTemplater.Formatter
         private readonly IModelLookup m_models;
         private readonly List<IFormatter> m_formatters;
         private readonly List<string> m_errors;
+        private int m_registeredFormatterCount;
 
         public VariableReplacer(IModelLookup models, ProcessSettings processSettings)
         {
@@ -73,9 +74,15 @@ namespace DocxTemplater.Formatter
             m_errors.Add(errorMessage);
         }
 
+        /// <summary>
+        /// Registered formatters take precedence over the built-in ones, so a module can replace a
+        /// built-in formatter for the same prefix (e.g. DocxTemplater.Html replaces the altChunk based <c>html</c> formatter).
+        /// Among registered formatters the registration order is kept.
+        /// </summary>
         public void RegisterFormatter(IFormatter formatter)
         {
-            m_formatters.Add(formatter);
+            m_formatters.Insert(m_registeredFormatterCount, formatter);
+            m_registeredFormatterCount++;
         }
 
         /// <summary>

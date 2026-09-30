@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFrameworks>net10.0</TargetFrameworks>
+		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+	</PropertyGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\DocxTemplater\DocxTemplater.csproj" />
+	</ItemGroup>
+	<ItemGroup>
+	  <PackageReference Include="AngleSharp" Version="[1.8.2, 2.0.0)" />
+	</ItemGroup>
+</Project>

@@ -57,6 +57,7 @@ Enhance DocxTemplater with these optional extension packages:
 | [DocxTemplater.Images ](https://www.nuget.org/packages/DocxTemplater.Images)  |Enables embedding images in generated Word documents|
 | [DocxTemplater.Images.ImageSharp](https://www.nuget.org/packages/DocxTemplater.Images.ImageSharp) |Optional ImageSharp metadata adapter for more robust image decoding|
 | [DocxTemplater.Markdown ](https://www.nuget.org/packages/DocxTemplater.Markdown)  | Allows use of Markdown syntax for generating parts of Word documents|
+| DocxTemplater.Html | Converts HTML to native Word content (paragraphs, lists, tables, images, links) - see [HTML Formatter](#html-formatter). Targets .NET 10 |
 
 Image metadata defaults to the dependency-free built-in header reader in `DocxTemplater.Images`.
 If you need ImageSharp's broader format handling, pass it explicitly:
@@ -100,7 +101,7 @@ The syntax is case insensitive.
 | `{{(ds.Price * 1.19)}:f(c)}`                             | Expressions with calculations and formatters.                                                   |
 | `{{(ds.Items[0].Name)}}`                                 | Expressions with array / list / dictionary index access.                                        |
 | `{{SomeBytes}:img()}`                                    | Image Formatter for image data.                                                                 |
-| `{{SomeHtmlString}:html()}`                              | Inserts HTML string into the word document.                                                     |
+| `{{SomeHtmlString}:html()}`                              | Inserts HTML string into the word document (native Word content with `DocxTemplater.Html`).    |
 | `{{ds}:template('ds.SubDocument')}`                      | Inserts another docx document (or OpenXML fragment) at the placeholder position.               |
 | `{{@i:ItemCount}}...{{i}}...{{/}}`                       | Range loop that repeats its content `ItemCount` times.                                          |
 | `{{#Items}}{?{Items._Idx % 2 == 0}}{{.}}{{/}}{{/Items}}` | Renders every second item in a list.                                                            |
@@ -378,6 +379,106 @@ In your template, you would have a placeholder like this:
 ```
 {{ds.MarkdownContent}:MD}
 ```
+---
+## HTML Formatter
+
+The HTML Formatter converts an HTML string into native Word content: paragraphs, headings, formatted runs, numbered and bulleted lists, tables, hyperlinks and images. The result uses the styles of your template, so it looks like the rest of the document and renders everywhere (Word, LibreOffice, PDF converters).
+
+**_NOTE:_** The NuGet package `DocxTemplater.Html` is required (targets .NET 10). Without it, the core library falls back to a built-in `html` formatter that embeds the HTML as an *altChunk*: Word converts it when the document is opened, but other applications and converters show nothing, and template styles are not applied.
+
+Register the formatter. Register the `ImageFormatter` as well if the HTML contains images:
+```csharp
+using DocxTemplater;
+using DocxTemplater.Html;
+using DocxTemplater.Images;
+
+var template = DocxTemplate.Open("template.docx");
+template.RegisterFormatter(new ImageFormatter()); // optional - needed for <img>
+template.RegisterFormatter(new HtmlFormatter());
+```
+
+#### Usage
+
+Use the `html` prefix in the template:
+```
+{{ds.Description}:html}
+```
+
+```csharp
+var html = """
+           <h2>Order summary</h2>
+           <p>Thank you for your order, <b>{{ds.Customer}}</b>.</p>
+           <ul>
+             <li>Delivery within <span style="color:#c00">3 days</span></li>
+             <li>Questions? <a href="https://example.com/support">Contact support</a></li>
+           </ul>
+           <table>
+             <thead><tr><th>Item</th><th>Qty</th></tr></thead>
+             <tr><td>Widget</td><td>2</td></tr>
+             <tr><td colspan="2"><i>Free shipping</i></td></tr>
+           </table>
+           """;
+template.BindModel("ds", new { Description = html, Customer = "Jane Doe" });
+template.Save("generated.docx");
+```
+
+Placeholders inside the HTML (like `{{ds.Customer}}` above) are replaced too. If the placeholder is the only content of its paragraph, the HTML replaces the paragraph. If there is text around the placeholder, inline HTML (`<b>`, `<i>`, `<a>`, ...) flows into that text. Block elements with their own formatting, such as headings and list items, become separate paragraphs, so template text is never turned into a heading.
+
+A property can also default to the HTML formatter, so the template only needs `{{ds.Description}}`:
+```csharp
+public class Order
+{
+    [ModelProperty(DefaultFormatter = "html")]
+    public string Description { get; set; }
+}
+```
+
+#### Supported HTML
+
+| Category | Elements / CSS |
+|----------|----------------|
+| Text | `b` `strong` `i` `em` `u` `ins` `s` `del` `strike` `sub` `sup` `code` `kbd` `mark` `small` `big` `font` `span` `br` |
+| Blocks | `p` `div` `h1`-`h6` `blockquote` `pre` `hr` `section`/`article`/... (treated like `div`) |
+| Lists | `ul` `ol` `li`, nested to 9 levels, `ol start="3"`, `type="a"` / `list-style-type` |
+| Tables | `table` `thead` `tbody` `tfoot` `tr` `th` `td` `caption`, `colspan`, `rowspan`, cell `bgcolor` / `background-color`, `valign` |
+| Links | `http(s)`, `mailto`, `tel` and `#bookmark` links. Other schemes (e.g. `javascript:`) are rendered as plain text |
+| Images | `data:image/...;base64,...` URIs with optional `width` / `height`. Remote images are **not downloaded**, their `alt` text is shown |
+| Inline CSS | `color`, `background-color`, `font-weight`, `font-style`, `font-size`, `font-family`, `text-decoration`, `vertical-align`, `text-transform: uppercase`, `text-align`, `margin-left`, `padding-left`, `text-indent`, `page-break-before/after`, `display: none` |
+
+`<script>`, `<style>`, form controls and other non-content elements are ignored. Malformed HTML is parsed like a browser would parse it.
+
+#### Styles
+
+The formatter uses styles from your template when they exist:
+
+| HTML | Template style | Fallback if the style is missing |
+|------|----------------|----------------------------------|
+| `h1`-`h6` | Built-in "heading 1".."heading 6" (found by name, so localized templates work) | Bold text in decreasing sizes, with an outline level for the navigation pane / TOC |
+| `blockquote` | "Quote" | Indented with a grey left border |
+| `table` | "html_TableStyle", then "Table Grid" | Simple single-line borders |
+| `ul` / `ol` | List styles "html_ListStyle" / "html_OrderedListStyle" | Built-in bullet / number definitions |
+| `a` | Character style "Hyperlink" | Blue, underlined |
+
+Styles can be chosen per placeholder with arguments: `ts` (table style), `ls` (unordered list style), `ols` (ordered list style):
+```
+{{ds.Description}:html(ts:'Grid Table 4', ols:'MyNumbering')}
+```
+
+#### Configuration
+
+```csharp
+var config = new HtmlFormatterConfiguration
+{
+    TableStyle = "My Table Style",
+    QuoteStyle = "Intense Quote",
+    MonospaceFont = "Consolas",
+    ReplacePlaceholdersInHtml = false, // recommended for untrusted HTML
+};
+template.RegisterFormatter(new HtmlFormatter(config));
+```
+
+> **Security:** `ReplacePlaceholdersInHtml` is enabled by default. Disable it when the HTML comes from users (e.g. a rich-text editor). Otherwise a user could type `{{...}}` and read any bound model value or evaluate expressions.
+
 ---
 ## Sub-Template Formatter - Inserting Documents
 
