@@ -440,12 +440,52 @@ public class Order
 | Text | `b` `strong` `i` `em` `u` `ins` `s` `del` `strike` `sub` `sup` `code` `kbd` `mark` `small` `big` `font` `span` `br` |
 | Blocks | `p` `div` `h1`-`h6` `blockquote` `pre` `hr` `section`/`article`/... (treated like `div`) |
 | Lists | `ul` `ol` `li`, nested to 9 levels, `ol start="3"`, `type="a"` / `list-style-type` |
-| Tables | `table` `thead` `tbody` `tfoot` `tr` `th` `td` `caption`, `colspan`, `rowspan`, cell `bgcolor` / `background-color`, `valign` |
+| Tables | `table` `thead` `tbody` `tfoot` `tr` `th` `td` `caption` `colgroup` `col`, plus layout and borders - see [Tables](#tables) |
 | Links | `http(s)`, `mailto`, `tel` and `#bookmark` links. Other schemes (e.g. `javascript:`) are rendered as plain text |
 | Images | `data:image/...;base64,...` URIs with optional `width` / `height`. Remote images are **not downloaded**, their `alt` text is shown |
 | Inline CSS | `color`, `background-color`, `font-weight`, `font-style`, `font-size`, `font-family`, `text-decoration`, `vertical-align`, `text-transform: uppercase`, `text-align`, `margin-left`, `padding-left`, `text-indent`, `page-break-before/after: always`, `break-before/after: page`, `break-inside: avoid` / `page-break-inside: avoid`, `break-after: avoid` / `page-break-after: avoid`, `display: none` |
 
 `<script>`, `<style>`, form controls and other non-content elements are ignored. Malformed HTML is parsed like a browser would parse it.
+
+#### Tables
+
+**Borders.** If the HTML contains no border information, the table uses the template's table style ("html_TableStyle", then "Table Grid"), or a simple grid if the template has neither. As soon as the HTML specifies borders anywhere in a table, the HTML defines every line like a browser does, and the template style's lines are overridden. This applies to the `border`, `frame` or `rules` attribute, and to CSS borders on the table, a row or a cell. So `border="0"` really means no lines.
+
+```html
+<!-- no lines at all, also when the template has a "Table Grid" style -->
+<table border="0">...</table>
+
+<!-- 2px outer frame, 1px lines between all cells -->
+<table border="2">...</table>
+
+<!-- only horizontal lines: above and below the table and between rows -->
+<table frame="hsides" rules="rows">...</table>
+
+<!-- CSS borders: a frame around the table, a line under the header row, one highlighted cell -->
+<table style="border-collapse: collapse; border: 1px solid #999">
+  <tr style="border-bottom: 2px solid #000"><th>Name</th><th>Value</th></tr>
+  <tr><td>A</td><td style="border: 1px dashed red">42</td></tr>
+</table>
+```
+
+**Layout.** Column widths come from `<col>` / `<colgroup>` first, then from the `width` of single-column cells. Columns without a width share the remaining space. If every column has a fixed width and the table has none, the columns define the table width:
+```html
+<table cellpadding="4" style="table-layout: fixed">
+  <colgroup><col width="120"><col width="60%"><col></colgroup>
+  <tr height="30" valign="middle">
+    <td>120px</td><td>60% of the table</td><td nowrap>the rest</td>
+  </tr>
+</table>
+```
+
+| Element | Supported |
+|---------|-----------|
+| `table` | `width` (px or %), `border`, `frame` (`void` `above` `below` `hsides` `vsides` `lhs` `rhs` `box`), `rules` (`none` `rows` `cols` `all`), `cellpadding`, `cellspacing`, `bgcolor`, `align`. CSS: `border*`, `width`, `background-color`, `table-layout: fixed`, `margin-left` (indent), `margin: 0 auto` (center), `border-spacing` |
+| `col` / `colgroup` | `width` (px or %), `span` |
+| `tr` | `height`, `align`, `valign`, `bgcolor` (defaults for its cells). CSS: `border*`, `height`, `background-color`, `text-align`, `vertical-align`, `break-inside: avoid` (row never splits across pages) |
+| `td` / `th` | `colspan`, `rowspan`, `width`, `height`, `align`, `valign`, `bgcolor`, `nowrap`. CSS: `border*`, `padding*`, `width`, `height`, `background-color`, `text-align`, `vertical-align`, `white-space: nowrap` |
+
+CSS borders support the `border` / `border-top|right|bottom|left` shorthands and the `-width` / `-style` / `-color` properties (with 1-4 values). Styles `solid`, `dashed`, `dotted`, `double`, `groove`, `ridge`, `inset`, `outset` and `none` are supported. Rows of `<thead>` repeat on every page.
 
 #### Page breaks and keeping entries together
 

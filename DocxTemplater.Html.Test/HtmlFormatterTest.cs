@@ -5,7 +5,7 @@ using DocxTemplater.Images;
 
 namespace DocxTemplater.Html.Test
 {
-    internal class HtmlFormatterTest
+    internal partial class HtmlFormatterTest
     {
         // 1x1 pixel png
         private const string PngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";

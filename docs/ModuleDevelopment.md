@@ -34,7 +34,7 @@ All 477 existing core tests still pass on net8/9/10 after these changes.
 ### New projects
 | Project | Content |
 |---------|---------|
-| `DocxTemplater.Html` (net10.0) | `HtmlFormatter` (IFormatter + insertion into the template), `HtmlToOpenXmlConverter` (DOM walk → OpenXML), `ListNumbering` (numbering.xml management), `CssParser` (inline styles, colors, units), `HtmlFormatterConfiguration` |
+| `DocxTemplater.Html` (net10.0) | `HtmlFormatter` (IFormatter + insertion into the template), `HtmlToOpenXmlConverter` (DOM walk → OpenXML; tables in `HtmlToOpenXmlConverter.Tables.cs`), `ListNumbering` (numbering.xml management), `CssParser` (inline styles, colors, units), `CssBoxParser` (css borders and padding), `HtmlFormatterConfiguration` |
 | `DocxTemplater.Html.Test` (net10.0) | 25 tests + an `[Explicit]` sample document generator (`SampleDocumentTest`, set `DOCX_TEMPLATER_HTML_SAMPLE=<path>`) |
 
 The only dependency is **AngleSharp** (MIT, `[1.8.2, 2.0.0)`), an HTML5-spec parser. It fixes broken HTML the way a browser does (unclosed tags, `<p>` inside `<b>`, stray `<li>`, ...), which matters because HTML from rich-text editors and users is often malformed.
@@ -110,6 +110,8 @@ Guard against recursion: a nested placeholder can produce HTML that contains pla
 - **A trailing `<br>` in a block is dropped** (browsers ignore it as well).
 - **List items**: a mutable `ListItemState` is shared by all paragraphs of one `<li>`. Only the first paragraph gets `numPr`, and later ones (e.g. text after a nested list) get an indent instead.
 - **Tables**: first place the cells on a grid (`LayoutTable`). HTML `rowspan` becomes a `vMerge restart` cell plus `vMerge` continuation cells in each following row. `colspan` becomes `gridSpan`. Pad short rows, because Word tolerates ragged rows but LibreOffice renders them badly.
+- **Table borders have two modes.** Without any border information in the html, the table keeps the template's table style (most templates want that). With *any* border information (`border`/`frame`/`rules` attributes or css borders on table, row or cell), the html defines every line, and each cell gets explicit `tcBorders`: cell css → row css → table frame (outer edges) / rules (inner edges), with `nil` for "no line". The explicit cell borders are needed because a table style can draw lines through conditional formatting (header row, banding) that `tblBorders` alone does not override. *The bug this fixed:* `border="0"` was ignored whenever the template had a "Table Grid" style.
+- **Column widths** are resolved like a browser: `<col>`/`<colgroup>` first, then single-column cells; unknown columns share the rest. Cell widths are always the sum of their grid columns in dxa, so grid and cells never disagree. Cell `padding` goes to `tcMar` and is removed from the css used for the cell's paragraphs. Otherwise `padding-left` would also indent the text.
 - **Headings**: find the style by the **built-in English name** (`heading 1`) first, then by id. Word localizes style *ids* (German `berschrift1`, Czech `Nadpis1`) but not the built-in *names*. If no style exists, use direct formatting plus `outlineLevel` (so the navigation pane and TOC still work) and `keepNext`.
 
 ---
@@ -179,7 +181,6 @@ Always call `docTemplate.Validate()` in tests. It runs `OpenXmlValidator` on the
 - **Fix `GetImage` doc-property ids for detached content** in `ImageService`, which affects the Markdown module too (several images in one Markdown value).
 - **HTML module gaps:**
   - `<style>` blocks / CSS classes (would need AngleSharp.Css).
-  - Borders and padding from CSS on tables and cells, and column widths from `<col>`/`<colgroup>`.
   - Remote images through an opt-in resolver callback (`Func<Uri, byte[]>`). There is intentionally no network access by default.
   - `<a name>` / `id` → bookmarks, so `#anchor` links have targets.
   - `dir="rtl"` (bidi), `<q>` quotes, and definition lists with a hanging indent.
