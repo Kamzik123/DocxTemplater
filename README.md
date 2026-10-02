@@ -468,7 +468,12 @@ public class Order
 </table>
 ```
 
-**Layout.** Column widths come from `<col>` / `<colgroup>` first, then from the `width` of single-column cells. Columns without a width share the remaining space. If every column has a fixed width and the table has none, the columns define the table width:
+**Width.** Like in a browser, a table without a `width` is only as wide as its content, at most the text width of the page. A small column (e.g. a `-` bullet column with the text next to it) stays small, and Word sizes such tables to their real content (AutoFit). If the content is wider than the page, the table spans the full width and long texts wrap. To get the old behavior (every table without a width spans the page with equal columns), set:
+```csharp
+new HtmlFormatterConfiguration { TablesWithoutWidth = HtmlTableWidth.FullWidth }
+```
+
+**Layout.** Column widths come from `<col>` / `<colgroup>` first, then from the `width` of single-column cells. Columns without a width are sized by their content. If every column has a fixed width and the table has none, the columns define the table width:
 ```html
 <table cellpadding="4" style="table-layout: fixed">
   <colgroup><col width="120"><col width="60%"><col></colgroup>

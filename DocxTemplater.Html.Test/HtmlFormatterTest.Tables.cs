@@ -173,6 +173,51 @@ namespace DocxTemplater.Html.Test
         }
 
         [Test]
+        public void TableWithoutWidthFitsItsContent()
+        {
+            // a bullet-like layout table: a dash, an empty spacer column and the text right next to it
+            var html = """
+                       <table border="0" cellpadding="0" cellspacing="0">
+                         <tr><td style="font-size: 10pt"><b>-</b></td><td style="font-size: 10pt"></td><td style="font-size: 10pt"><b>Con coeficientes de combinaci&#243;n</b></td></tr>
+                       </table>
+                       """;
+            var table = RenderTable(html);
+
+            var tableWidth = table.GetFirstChild<TableProperties>().TableWidth;
+            Assert.That(tableWidth.Type.Value, Is.EqualTo(TableWidthUnitValues.Auto), "Word sizes the table to its content");
+            Assert.That(table.Descendants<TableCellWidth>().Select(x => x.Type.Value), Is.All.EqualTo(TableWidthUnitValues.Auto));
+
+            var grid = table.GetFirstChild<TableGrid>().Elements<GridColumn>().Select(x => int.Parse(x.Width.Value)).ToList();
+            Assert.That(grid[0], Is.LessThan(200), "the dash column is only as wide as the dash");
+            Assert.That(grid[1], Is.LessThan(50), "the empty column almost disappears");
+            Assert.That(grid[2], Is.InRange(2500, 4500), "the text column fits its text on one line");
+        }
+
+        [Test]
+        public void TableWithoutWidthWrapsWhenContentIsWiderThanThePage()
+        {
+            var longText = string.Join(" ", Enumerable.Repeat("long words", 60));
+            var table = RenderTable($"<table><tr><td>short</td><td>{longText}</td></tr></table>");
+
+            Assert.That(table.GetFirstChild<TableProperties>().TableWidth.Type.Value, Is.EqualTo(TableWidthUnitValues.Pct), "full width when the content does not fit");
+            var grid = table.GetFirstChild<TableGrid>().Elements<GridColumn>().Select(x => int.Parse(x.Width.Value)).ToList();
+            Assert.That(grid.Sum(), Is.InRange(9300, 9400), "the columns fill the text width");
+            Assert.That(grid[0], Is.LessThan(grid[1]), "the short column keeps its content width, the long one wraps");
+        }
+
+        [Test]
+        public void TableWithoutWidthFullWidthOption()
+        {
+            var body = Render("{{ds}:html}", "<table><tr><td>-</td><td>text</td></tr></table>", styles: TableGridStyle(),
+                configuration: new HtmlFormatterConfiguration { TablesWithoutWidth = HtmlTableWidth.FullWidth });
+            var table = body.Elements<Table>().Single();
+
+            Assert.That(table.GetFirstChild<TableProperties>().TableWidth.Width.Value, Is.EqualTo("5000"));
+            var grid = table.GetFirstChild<TableGrid>().Elements<GridColumn>().Select(x => x.Width.Value).Distinct();
+            Assert.That(grid.Count(), Is.EqualTo(1), "equal columns");
+        }
+
+        [Test]
         public void TableWithoutStyleAndWithoutBorderInformationGetsAGrid()
         {
             var table = RenderTable("<table><tr><td>a</td></tr></table>", styles: new Styles());

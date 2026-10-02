@@ -9,6 +9,22 @@ namespace DocxTemplater.Html
     /// </summary>
     public sealed record HtmlListLevel(string LevelText, NumberFormatValues NumberingFormat);
 
+    /// <summary>
+    /// How tables without a width in the html are sized.
+    /// </summary>
+    public enum HtmlTableWidth
+    {
+        /// <summary>
+        /// Like a browser: the table is as wide as its content needs (at most the text width).
+        /// </summary>
+        FitContent,
+
+        /// <summary>
+        /// The table spans the whole text width, columns without a width share it equally.
+        /// </summary>
+        FullWidth,
+    }
+
     public class HtmlFormatterConfiguration
     {
         public static readonly HtmlFormatterConfiguration Default = new();
@@ -75,6 +91,13 @@ namespace DocxTemplater.Html
         public string TableStyle { get; set; } = "html_TableStyle";
 
         /// <summary>
+        /// Width of tables whose html specifies no width. <see cref="HtmlTableWidth.FitContent"/> (default) sizes the
+        /// table and its columns to the content like a browser; <see cref="HtmlTableWidth.FullWidth"/> stretches the
+        /// table over the whole text width with equal columns.
+        /// </summary>
+        public HtmlTableWidth TablesWithoutWidth { get; set; } = HtmlTableWidth.FitContent;
+
+        /// <summary>
         /// Name of the paragraph style applied to <c>&lt;blockquote&gt;</c>. If not found, the quote is indented and gets a left border.
         /// </summary>
         public string QuoteStyle { get; set; } = "Quote";
@@ -101,6 +124,7 @@ namespace DocxTemplater.Html
                 OrderedListStyle = OrderedListStyle,
                 UnorderedListStyle = UnorderedListStyle,
                 TableStyle = TableStyle,
+                TablesWithoutWidth = TablesWithoutWidth,
                 QuoteStyle = QuoteStyle,
                 MonospaceFont = MonospaceFont,
                 ReplacePlaceholdersInHtml = ReplacePlaceholdersInHtml,

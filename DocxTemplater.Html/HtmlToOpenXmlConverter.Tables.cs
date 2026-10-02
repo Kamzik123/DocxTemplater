@@ -19,7 +19,15 @@ namespace DocxTemplater.Html
     internal sealed partial class HtmlToOpenXmlConverter
     {
         private const int MinColumnWidthTwips = 300;
+        private const int MinGridColumnTwips = 20;
         private const int TwipsPerPixel = 15;
+
+        // Word's default left/right cell margin (0.08") when the html sets no padding
+        private const int DefaultCellMarginTwips = 108;
+
+        // average character width of a proportional font in em - deliberately a little generous, so an
+        // estimated column rather wraps a bit later than too early
+        private const double AverageCharWidthEm = 0.55;
 
         /// <summary>
         /// A grid position of a table row. <see cref="Cell"/> is null for the continuation of a rowspan
@@ -94,7 +102,7 @@ namespace DocxTemplater.Html
 
             var rowStyles = rows.Select(r => CssParser.ParseStyleAttribute(r.GetAttribute("style"))).ToList();
             var borderModel = CreateBorderModel(table, css, rows, rowStyles);
-            var columnWidths = ComputeColumnWidths(table, css, layout, columnCount, out var tableWidth);
+            var columnWidths = ComputeColumnWidths(table, css, layout, columnCount, out var tableWidth, out var autoColumns);
 
             var wordTable = new Table();
             wordTable.AppendChild(CreateTableProperties(table, css, borderModel, tableWidth));
@@ -117,7 +125,7 @@ namespace DocxTemplater.Html
 
                 foreach (var slot in layout[r])
                 {
-                    row.AppendChild(CreateCell(slot, r, rows.Count, columnCount, columnWidths, rows[r], rowStyles[r], borderModel));
+                    row.AppendChild(CreateCell(slot, r, rows.Count, columnCount, columnWidths, autoColumns, rows[r], rowStyles[r], borderModel));
                 }
                 wordTable.AppendChild(row);
             }
@@ -232,7 +240,8 @@ namespace DocxTemplater.Html
         /// Column widths in twips from <c>&lt;col&gt;</c> / <c>&lt;colgroup&gt;</c> and the widths of single-column cells.
         /// Columns without a width share the remaining space.
         /// </summary>
-        private int[] ComputeColumnWidths(IElement table, Dictionary<string, string> css, List<List<CellSlot>> layout, int columnCount, out TableWidth tableWidth)
+        private int[] ComputeColumnWidths(IElement table, Dictionary<string, string> css, List<List<CellSlot>> layout, int columnCount,
+            out TableWidth tableWidth, out bool[] autoColumns)
         {
             var absolute = new double?[columnCount];
             var percent = new double?[columnCount];
@@ -300,6 +309,10 @@ namespace DocxTemplater.Html
 
             var (tableTwips, tablePercent) = GetTableWidth(table, css);
             var allAbsolute = absolute.All(x => x != null);
+            var fitContent = m_configuration.TablesWithoutWidth == HtmlTableWidth.FitContent;
+            var shrinkToContent = false;
+            tableWidth = null;
+            autoColumns = new bool[columnCount];
             double total;
             if (tableTwips.HasValue)
             {
@@ -319,13 +332,14 @@ namespace DocxTemplater.Html
             }
             else
             {
+                // no width in the html: like a browser, the table is only as wide as its content (at most the text width)
                 total = m_availableWidthTwips;
-                tableWidth = new TableWidth { Type = TableWidthUnitValues.Pct, Width = "5000" };
+                shrinkToContent = fitContent;
             }
 
             var widths = new double[columnCount];
             var known = 0.0;
-            var unknown = 0;
+            var unknownColumns = new List<int>();
             for (var i = 0; i < columnCount; i++)
             {
                 if (absolute[i] is { } a)
@@ -338,21 +352,53 @@ namespace DocxTemplater.Html
                 }
                 else
                 {
-                    unknown++;
+                    unknownColumns.Add(i);
                     continue;
                 }
                 known += widths[i];
             }
 
-            if (unknown > 0)
+            if (unknownColumns.Count > 0 && !fitContent)
             {
-                var share = Math.Max(MinColumnWidthTwips, (total - known) / unknown);
-                for (var i = 0; i < columnCount; i++)
+                var share = Math.Max(MinColumnWidthTwips, (total - known) / unknownColumns.Count);
+                foreach (var i in unknownColumns)
                 {
-                    if (absolute[i] == null && percent[i] == null)
+                    widths[i] = share;
+                }
+            }
+            else if (unknownColumns.Count > 0)
+            {
+                // columns without a width are sized by their content (min = longest word, max = longest line)
+                var (min, max) = EstimateContentWidths(table, layout, columnCount);
+                var space = Math.Max(0, total - known);
+                var sumMin = unknownColumns.Sum(i => min[i]);
+                var sumMax = unknownColumns.Sum(i => max[i]);
+                foreach (var i in unknownColumns)
+                {
+                    if (sumMax <= space && shrinkToContent)
                     {
-                        widths[i] = share;
+                        // everything fits: each column as wide as its content, Word's autofit takes it from there
+                        widths[i] = max[i];
+                        autoColumns[i] = true;
                     }
+                    else if (sumMax <= space)
+                    {
+                        // a fixed table width with room to spare: grow the columns in proportion to their content
+                        widths[i] = sumMax > 0 ? max[i] + ((space - sumMax) * max[i] / sumMax) : space / unknownColumns.Count;
+                    }
+                    else if (sumMin < space)
+                    {
+                        // not enough room for every line: wrap, but give each column at least its longest word
+                        widths[i] = min[i] + ((max[i] - min[i]) * (space - sumMin) / (sumMax - sumMin));
+                    }
+                    else
+                    {
+                        widths[i] = sumMin > 0 ? min[i] * space / sumMin : space / unknownColumns.Count;
+                    }
+                }
+                if (shrinkToContent && sumMax <= space)
+                {
+                    tableWidth = new TableWidth { Type = TableWidthUnitValues.Auto, Width = "0" };
                 }
             }
             else if (known > 0 && Math.Abs(known - total) > 1)
@@ -365,7 +411,108 @@ namespace DocxTemplater.Html
                 }
             }
 
-            return widths.Select(x => Math.Max(1, (int)Math.Round(x))).ToArray();
+            tableWidth ??= new TableWidth { Type = TableWidthUnitValues.Pct, Width = "5000" };
+            return widths.Select(x => Math.Max(MinGridColumnTwips, (int)Math.Round(x))).ToArray();
+        }
+
+        /// <summary>
+        /// Estimates the minimum (longest word) and maximum (longest line) content width of every column in twips,
+        /// from the single-column cells. Word re-measures autofit tables itself, the estimate is what other
+        /// applications (e.g. LibreOffice) use and what decides wrapping when the table does not fit.
+        /// </summary>
+        private (double[] Min, double[] Max) EstimateContentWidths(IElement table, List<List<CellSlot>> layout, int columnCount)
+        {
+            var min = new double[columnCount];
+            var max = new double[columnCount];
+            var cellPadding = ParseInt(table.GetAttribute("cellpadding"));
+            foreach (var slot in layout.SelectMany(x => x).Where(x => x.Cell != null && x.ColumnSpan == 1))
+            {
+                var (cellMin, cellMax) = EstimateCellWidth(slot.Cell, cellPadding);
+                min[slot.Column] = Math.Max(min[slot.Column], cellMin);
+                max[slot.Column] = Math.Max(max[slot.Column], cellMax);
+            }
+            return (min, max);
+        }
+
+        private (double Min, double Max) EstimateCellWidth(IElement cell, int? tableCellPadding)
+        {
+            var css = CssParser.ParseStyleAttribute(cell.GetAttribute("style"));
+            var fontSize = CssParser.ParseFontSize(css.TryGetValue("font-size", out var size) ? size : null, TemplateFontSize) ?? TemplateFontSize;
+            var noWrap = cell.HasAttribute("nowrap")
+                         || (css.TryGetValue("white-space", out var whiteSpace) && whiteSpace.Trim().ToLowerInvariant() is "nowrap" or "pre");
+
+            var lines = new List<string>();
+            var line = new System.Text.StringBuilder();
+            var imageTwips = 0.0;
+
+            void Flush()
+            {
+                var text = string.Join(' ', line.ToString().Split((char[])[' ', '\t', '\r', '\n', '\f'], StringSplitOptions.RemoveEmptyEntries));
+                if (text.Length > 0)
+                {
+                    lines.Add(text);
+                }
+                line.Clear();
+            }
+
+            void Walk(INode node)
+            {
+                foreach (var child in node.ChildNodes)
+                {
+                    if (child is IText text)
+                    {
+                        line.Append(text.Data);
+                        continue;
+                    }
+                    if (child is not IElement element)
+                    {
+                        continue;
+                    }
+                    var tag = element.LocalName.ToLowerInvariant();
+                    if (SkippedElements.Contains(tag))
+                    {
+                        continue;
+                    }
+                    if (tag == "br")
+                    {
+                        Flush();
+                    }
+                    else if (tag == "img")
+                    {
+                        var imageCss = CssParser.ParseStyleAttribute(element.GetAttribute("style"));
+                        var width = CssParser.ParseLengthToPixels(imageCss.TryGetValue("width", out var w) ? w : element.GetAttribute("width"));
+                        imageTwips = Math.Max(imageTwips, (width ?? 0) * TwipsPerPixel);
+                    }
+                    else
+                    {
+                        var isBlock = IsBlockLevel(tag) || tag is "tr" or "li";
+                        if (isBlock)
+                        {
+                            Flush();
+                        }
+                        Walk(element);
+                        if (isBlock)
+                        {
+                            Flush();
+                        }
+                    }
+                }
+            }
+
+            Walk(cell);
+            Flush();
+
+            var charTwips = fontSize * 20 * AverageCharWidthEm;
+            var maxChars = lines.Count > 0 ? lines.Max(x => x.Length) : 0;
+            var minChars = noWrap ? maxChars : lines.SelectMany(x => x.Split(' ')).Select(x => x.Length).DefaultIfEmpty(0).Max();
+
+            var padding = CssBoxParser.ParsePadding(css);
+            var horizontalPadding = padding[1] != null || padding[3] != null
+                ? (padding[1] ?? 0) + (padding[3] ?? 0)
+                : tableCellPadding.HasValue ? tableCellPadding.Value * TwipsPerPixel * 2 : DefaultCellMarginTwips * 2;
+
+            return (Math.Max(minChars * charTwips, imageTwips) + horizontalPadding,
+                    Math.Max(maxChars * charTwips, imageTwips) + horizontalPadding);
         }
 
         private static string GetWidth(IElement element)
@@ -505,7 +652,7 @@ namespace DocxTemplater.Html
             return CssParser.ParseLengthToTwips(height);
         }
 
-        private TableCell CreateCell(CellSlot slot, int rowIndex, int rowCount, int columnCount, int[] columnWidths,
+        private TableCell CreateCell(CellSlot slot, int rowIndex, int rowCount, int columnCount, int[] columnWidths, bool[] autoColumns,
             IElement row, Dictionary<string, string> rowCss, TableBorderModel borderModel)
         {
             var cell = new TableCell();
@@ -514,7 +661,9 @@ namespace DocxTemplater.Html
             var css = source != null ? CssParser.ParseStyleAttribute(source.GetAttribute("style")) : new Dictionary<string, string>();
 
             var width = columnWidths.Skip(slot.Column).Take(slot.ColumnSpan).Sum();
-            properties.TableCellWidth = new TableCellWidth { Type = TableWidthUnitValues.Dxa, Width = width.ToString() };
+            properties.TableCellWidth = autoColumns.Skip(slot.Column).Take(slot.ColumnSpan).All(x => x)
+                ? new TableCellWidth { Type = TableWidthUnitValues.Auto, Width = "0" }
+                : new TableCellWidth { Type = TableWidthUnitValues.Dxa, Width = width.ToString() };
 
             if (slot.ColumnSpan > 1)
             {
