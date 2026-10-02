@@ -128,6 +128,8 @@ Guard against recursion: a nested placeholder can produce HTML that contains pla
 | Numbering restart | Consecutive `<ol>`s continue each other's numbers | One `w:num` per ordered list with `w:lvlOverride/w:startOverride` |
 | Element order inside `pPr` / `rPr` / `tblPr` / `tcPr` | Schema validation errors | Use the SDK's typed properties (`properties.Bold = ...`, `properties.Justification = ...`). They insert in schema order. Avoid `AppendChild` on property containers |
 | Table cell ending with a table | Word "unreadable content" | A `w:tc` must end with a `w:p`. Append an empty paragraph |
+| Two `w:tbl` directly after each other (also html table ↔ template table at the placeholder) | Word shows **one** table: the second table's rows are squeezed into the first table's grid | Insert a separator paragraph (1pt, exact line height, no spacing): `CreateTableSeparator()` |
+| Mapping html `nowrap` to `w:noWrap` | Text that does not fit the column is **cut off** (a page cannot scroll sideways like a browser) | Don't emit `noWrap`. Use nowrap only for the width estimate, since Word's autofit keeps the line unbroken when there is room |
 | Copying the template `pPr` with a `sectPr` | Extra section breaks | Remove `SectionProperties` from clones |
 | Test templates built in code | `Validate()` complains about the *template*, not your output | Build valid templates: `w:tbl` needs `tblPr` and `tblGrid` |
 

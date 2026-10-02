@@ -478,7 +478,7 @@ new HtmlFormatterConfiguration { TablesWithoutWidth = HtmlTableWidth.FullWidth }
 <table cellpadding="4" style="table-layout: fixed">
   <colgroup><col width="120"><col width="60%"><col></colgroup>
   <tr height="30" valign="middle">
-    <td>120px</td><td>60% of the table</td><td nowrap>the rest</td>
+    <td>120px</td><td>60% of the table</td><td>the rest</td>
   </tr>
 </table>
 ```
@@ -489,6 +489,8 @@ new HtmlFormatterConfiguration { TablesWithoutWidth = HtmlTableWidth.FullWidth }
 | `col` / `colgroup` | `width` (px or %), `span` |
 | `tr` | `height`, `align`, `valign`, `bgcolor` (defaults for its cells). CSS: `border*`, `height`, `background-color`, `text-align`, `vertical-align`, `break-inside: avoid` (row never splits across pages) |
 | `td` / `th` | `colspan`, `rowspan`, `width`, `height`, `align`, `valign`, `bgcolor`, `nowrap`. CSS: `border*`, `padding*`, `width`, `height`, `background-color`, `text-align`, `vertical-align`, `white-space: nowrap` |
+
+`nowrap` / `white-space: nowrap` makes the column wide enough for the whole line when it fits on the page. If it doesn't fit, the text wraps instead of being cut off, because a page cannot scroll sideways like a browser. Two tables that follow each other directly are kept apart by a tiny 1pt paragraph, because Word would otherwise merge them into one table.
 
 CSS borders support the `border` / `border-top|right|bottom|left` shorthands and the `-width` / `-style` / `-color` properties (with 1-4 values). Styles `solid`, `dashed`, `dotted`, `double`, `groove`, `ridge`, `inset`, `outset` and `none` are supported. Rows of `<thead>` repeat on every page.
 

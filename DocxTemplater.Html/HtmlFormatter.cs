@@ -189,6 +189,19 @@ namespace DocxTemplater.Html
 
             target.RemoveWithEmptyParent();
 
+            // Word merges adjacent tables - keep html tables apart from template tables around the placeholder
+            foreach (var table in elements.OfType<Table>().Where(x => x.Parent != null))
+            {
+                if (table.PreviousSibling() is Table)
+                {
+                    table.InsertBeforeSelf(HtmlToOpenXmlConverter.CreateTableSeparator());
+                }
+                if (table.NextSibling() is Table)
+                {
+                    table.InsertAfterSelf(HtmlToOpenXmlConverter.CreateTableSeparator());
+                }
+            }
+
             if (cell != null && cell.LastChild is not Paragraph)
             {
                 cell.AppendChild(new Paragraph());

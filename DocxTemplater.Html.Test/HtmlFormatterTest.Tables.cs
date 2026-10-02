@@ -152,7 +152,7 @@ namespace DocxTemplater.Html.Test
             var margin = cells[0].TableCellProperties.TableCellMargin;
             Assert.That(margin.TopMargin.Width.Value, Is.EqualTo("30"));
             Assert.That(margin.LeftMargin.Width.Value, Is.EqualTo("60"));
-            Assert.That(cells[0].TableCellProperties.NoWrap, Is.Not.Null);
+            Assert.That(cells[0].TableCellProperties.NoWrap, Is.Null, "Word's noWrap would cut the text off instead of wrapping");
             Assert.That(cells[0].TableCellProperties.TableCellVerticalAlignment.Val.Value, Is.EqualTo(TableVerticalAlignmentValues.Bottom), "valign from the row");
             Assert.That(cells[0].Descendants<Justification>().Single().Val.Value, Is.EqualTo(JustificationValues.Right), "align from the row");
             Assert.That(cells[1].Descendants<Justification>().Single().Val.Value, Is.EqualTo(JustificationValues.Center), "the cell overrides the row");
@@ -203,6 +203,42 @@ namespace DocxTemplater.Html.Test
             var grid = table.GetFirstChild<TableGrid>().Elements<GridColumn>().Select(x => int.Parse(x.Width.Value)).ToList();
             Assert.That(grid.Sum(), Is.InRange(9300, 9400), "the columns fill the text width");
             Assert.That(grid[0], Is.LessThan(grid[1]), "the short column keeps its content width, the long one wraps");
+        }
+
+        [Test]
+        public void AdjacentTablesAreKeptApart()
+        {
+            // "Donde:" table directly followed by the definitions table - Word would merge them into one table
+            var html = """
+                       <table border="0" cellpadding="0" cellspacing="0"><tr><td>-</td><td></td><td>Donde:</td></tr></table>
+                       <table border="0" cellspacing="0">
+                         <tr><td>G<sub>k</sub></td><td style="white-space: nowrap">Acci&#243;n permanente</td></tr>
+                         <tr><td>&#947;<sub>Q,i</sub></td><td style="white-space: nowrap">Coeficiente parcial de seguridad de las acciones variables de acompa&#241;amiento</td></tr>
+                       </table>
+                       """;
+            var body = Render("{{ds}:html}", html, styles: TableGridStyle());
+
+            var elements = body.ChildElements.Where(x => x is not SectionProperties).ToList();
+            Assert.That(elements.Select(x => x.GetType().Name), Is.EqualTo((string[])["Table", "Paragraph", "Table"]));
+            var separator = (Paragraph)elements[1];
+            Assert.That(separator.InnerText, Is.Empty);
+            Assert.That(separator.ParagraphProperties.SpacingBetweenLines.Line.Value, Is.EqualTo("20"), "a 1pt line, nearly invisible");
+
+            var definitions = (Table)elements[2];
+            Assert.That(definitions.Descendants<NoWrap>(), Is.Empty);
+            var grid = definitions.GetFirstChild<TableGrid>().Elements<GridColumn>().Select(x => int.Parse(x.Width.Value)).ToList();
+            Assert.That(grid[1], Is.GreaterThan(grid[0] * 5), "the nowrap definitions get the space");
+        }
+
+        [Test]
+        public void HtmlTableNextToTemplateTableIsKeptApart()
+        {
+            var templateTable = new Table(new TableProperties(), new TableGrid(new GridColumn { Width = "5000" }),
+                new TableRow(new TableCell(new Paragraph(new Run(new Text("template table"))))));
+            var body = RenderDocument(new Body(new Paragraph(new Run(new Text("{{ds}:html}"))), templateTable),
+                "<table><tr><td>html table</td></tr></table>", styles: TableGridStyle()).Body;
+
+            Assert.That(body.ChildElements.Select(x => x.GetType().Name), Is.EqualTo((string[])["Table", "Paragraph", "Table"]));
         }
 
         [Test]

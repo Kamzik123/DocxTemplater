@@ -130,7 +130,25 @@ namespace DocxTemplater.Html
                 wordTable.AppendChild(row);
             }
 
+            // Word merges two tables without a paragraph in between into one table
+            if (m_container.LastChild is Table)
+            {
+                m_container.AppendChild(CreateTableSeparator());
+            }
             m_container.AppendChild(wordTable);
+        }
+
+        /// <summary>
+        /// A paragraph that is as small as possible (1pt, no spacing). Word joins two tables that directly follow each
+        /// other into one table, so adjacent tables need a paragraph between them to stay separate like in a browser.
+        /// </summary>
+        internal static Paragraph CreateTableSeparator()
+        {
+            return new Paragraph(new ParagraphProperties
+            {
+                SpacingBetweenLines = new SpacingBetweenLines { Before = "0", After = "0", Line = "20", LineRule = LineSpacingRuleValues.Exact },
+                ParagraphMarkRunProperties = new ParagraphMarkRunProperties(new FontSize { Val = "2" }, new FontSizeComplexScript { Val = "2" })
+            });
         }
 
         private void HandleCaption(IElement caption)
@@ -693,11 +711,9 @@ namespace DocxTemplater.Html
                 properties.Shading = new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = background };
             }
 
-            if (source != null && (source.HasAttribute("nowrap")
-                                   || (css.TryGetValue("white-space", out var whiteSpace) && whiteSpace.Trim().Equals("nowrap", StringComparison.OrdinalIgnoreCase))))
-            {
-                properties.NoWrap = new NoWrap();
-            }
+            // html nowrap is deliberately NOT mapped to Word's noWrap: a page cannot scroll sideways like a browser,
+            // so noWrap only ever cuts text off. nowrap is used for the column width estimate instead
+            // (EstimateCellWidth), and Word's autofit keeps the line unbroken whenever there is room.
 
             var padding = CssBoxParser.ParsePadding(css);
             if (padding.Any(x => x != null))
