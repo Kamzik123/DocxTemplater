@@ -451,5 +451,52 @@ namespace DocxTemplater.Test
                 }
             }
         }
+
+        [Test]
+        public void SubTemplateInsertDocxDocumentImportsUsedStyles()
+        {
+            // the sub document's default paragraph style is "Normal", the target's is "Standard" (e.g. a German template)
+            using var subDocStream = new MemoryStream();
+            using (var subDocument = WordprocessingDocument.Create(subDocStream, WordprocessingDocumentType.Document))
+            {
+                var subMainPart = subDocument.AddMainDocumentPart();
+                subMainPart.AddNewPart<StyleDefinitionsPart>().Styles = new Styles(
+                    new Style(new StyleName { Val = "Normal" }) { Type = StyleValues.Paragraph, StyleId = "Normal", Default = true },
+                    new Style(new StyleName { Val = "Cell Text" }, new BasedOn { Val = "Normal" }, new StyleRunProperties(new FontSize { Val = "16" })) { Type = StyleValues.Paragraph, StyleId = "CellText" },
+                    new Style(new StyleName { Val = "Unused" }) { Type = StyleValues.Paragraph, StyleId = "Unused" },
+                    new Style(new StyleName { Val = "Existing" }, new StyleRunProperties(new FontSize { Val = "40" })) { Type = StyleValues.Paragraph, StyleId = "Existing" });
+                subMainPart.Document = new Document(new Body(
+                    new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "CellText" }), new Run(new Text("styled"))),
+                    new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "Existing" }), new Run(new Text("existing"))),
+                    new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "Normal" }), new Run(new Text("normal")))));
+            }
+
+            using var memStream = new MemoryStream();
+            using (var wpDocument = WordprocessingDocument.Create(memStream, WordprocessingDocumentType.Document))
+            {
+                var mainPart = wpDocument.AddMainDocumentPart();
+                mainPart.AddNewPart<StyleDefinitionsPart>().Styles = new Styles(
+                    new Style(new StyleName { Val = "Normal" }) { Type = StyleValues.Paragraph, StyleId = "Standard", Default = true },
+                    new Style(new StyleName { Val = "Existing" }, new StyleRunProperties(new FontSize { Val = "20" })) { Type = StyleValues.Paragraph, StyleId = "Existing" });
+                mainPart.Document = new Document(new Body(new Paragraph(new Run(new Text("{{ds}:template('ds.SubDocument')}")))));
+            }
+            memStream.Position = 0;
+
+            var docTemplate = new DocxTemplate(memStream);
+            docTemplate.BindModel("ds", new { SubDocument = subDocStream.ToArray() });
+            var result = docTemplate.Process();
+            docTemplate.Validate();
+            result.Position = 0;
+
+            using var document = WordprocessingDocument.Open(result, false);
+            var styles = document.MainDocumentPart.StyleDefinitionsPart.Styles.Elements<Style>().ToList();
+            Assert.That(styles.Select(x => x.StyleId.Value), Is.EquivalentTo((string[])["Standard", "Existing", "CellText"]),
+                "only used styles are copied, the source's default paragraph style is replaced by the target's");
+            var cellText = styles.Single(x => x.StyleId == "CellText");
+            Assert.That(cellText.BasedOn.Val.Value, Is.EqualTo("Standard"));
+            Assert.That(cellText.StyleRunProperties.FontSize.Val.Value, Is.EqualTo("16"));
+            Assert.That(styles.Single(x => x.StyleId == "Existing").StyleRunProperties.FontSize.Val.Value, Is.EqualTo("20"), "the target's style wins");
+            Assert.That(document.MainDocumentPart.Document.Body.InnerText, Is.EqualTo("styledexistingnormal"));
+        }
     }
 }

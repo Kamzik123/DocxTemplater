@@ -468,10 +468,12 @@ public class Order
 </table>
 ```
 
-**Width.** Like in a browser, a table without a `width` is only as wide as its content, at most the text width of the page. A small column (e.g. a `-` bullet column with the text next to it) stays small, and Word sizes such tables to their real content (AutoFit). If the content is wider than the page, the table spans the full width and long texts wrap. To get the old behavior (every table without a width spans the page with equal columns), set:
+**Width.** Like in a browser, a table without a `width` is only as wide as its content, at most the text width of the page. A small column (e.g. a `-` bullet column with the text next to it) stays small. If the content is wider than the page, the table spans the full width and long texts wrap. To get the old behavior (every table without a width spans the page with equal columns), set:
 ```csharp
 new HtmlFormatterConfiguration { TablesWithoutWidth = HtmlTableWidth.FullWidth }
 ```
+
+**Final column widths.** By default (`TableLayout = HtmlTableLayout.Fixed`) the formatter computes the final column widths and writes them with a fixed table layout, so Word, LibreOffice, PDF converters and document previews all show the same columns. Like in a browser, a column is never narrower than its longest word or number, even if the HTML asks for less, so values like `1.350` don't wrap. If the table doesn't fit the text width, the columns with wrappable text give up their space first. Narrow columns of numbers keep their width as long as possible. Widths are estimated from the text with typical sans-serif font metrics, slightly generously. A table with CSS `table-layout: fixed` uses the widths of the HTML as they are. With `HtmlTableLayout.AutoFit` the widths are only preferred widths, and Word re-measures the columns when the document is opened (other applications can't, so they may show different columns).
 
 **Layout.** Column widths come from `<col>` / `<colgroup>` first, then from the `width` of single-column cells. Columns without a width are sized by their content. If every column has a fixed width and the table has none, the columns define the table width:
 ```html
@@ -492,7 +494,9 @@ new HtmlFormatterConfiguration { TablesWithoutWidth = HtmlTableWidth.FullWidth }
 
 `nowrap` / `white-space: nowrap` makes the column wide enough for the whole line when it fits on the page. If it doesn't fit, the text wraps instead of being cut off, because a page cannot scroll sideways like a browser. Two tables that follow each other directly are kept apart by a tiny 1pt paragraph, because Word would otherwise merge them into one table.
 
-CSS borders support the `border` / `border-top|right|bottom|left` shorthands and the `-width` / `-style` / `-color` properties (with 1-4 values). Styles `solid`, `dashed`, `dotted`, `double`, `groove`, `ridge`, `inset`, `outset` and `none` are supported. Rows of `<thead>` repeat on every page.
+CSS borders support the `border` / `border-top|right|bottom|left` shorthands and the `-width` / `-style` / `-color` properties (with 1-4 values). Styles `solid`, `dashed`, `dotted`, `double`, `groove`, `ridge`, `inset`, `outset` and `none` are supported. Lines that are the same for the whole table are written once on the table, cells only carry the sides that differ.
+
+Rows of `<thead>` repeat on every page. A table without `<thead>` repeats its leading rows that contain only `<th>` cells.
 
 #### Page breaks and keeping entries together
 
@@ -551,6 +555,8 @@ Styles can be chosen per placeholder with arguments: `ts` (table style), `ls` (u
 {{ds.Description}:html(ts:'Grid Table 4', ols:'MyNumbering')}
 ```
 
+Run formatting that every run of a paragraph shares, such as the font, size and language of the placeholder or a CSS `font-family` / `font-size` / `color`, goes into a generated paragraph style named `html <id>`. It is based on the paragraph's own style, so the paragraph formatting doesn't change. The runs then only carry what differs (bold, italic, ...), and the paragraph mark of an empty table cell gets the font of the cell text instead of the template's Normal style. This keeps documents with large HTML tables small. The same formatting always gets the same style id, so documents built from HTML can be inserted into each other with the [Sub-Template Formatter](#sub-template-formatter---inserting-documents). The first and last paragraph of the HTML keep direct formatting, because they can be merged with template text around the placeholder.
+
 #### Configuration
 
 ```csharp
@@ -600,7 +606,7 @@ The value in front of the formatter (here `ds`) is bound as `ds` *inside* the in
 {{#ds.Items}}{{.}:T('ds.ItemTemplate')}{{/ds.Items}}
 ```
 
-**_NOTE:_** The content is inserted by copying the OpenXML body elements into the host document. Styles, numbering definitions and images stored in the inserted document's own parts are not imported.
+**_NOTE:_** The content is inserted by copying the OpenXML body elements into the host document. Images, links and other parts the content references are copied along. The paragraph, character and table styles it uses are copied too, unless the host document already has a style with the same id (the host's style wins). The inserted document's default paragraph style ("Normal") is replaced by the host's. Numbering definitions (list numbering) are not imported.
 
 ### Inserting sub-template as Inline Content
 

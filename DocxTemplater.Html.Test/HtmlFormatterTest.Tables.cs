@@ -9,9 +9,16 @@ namespace DocxTemplater.Html.Test
             return new Styles(new Style(new StyleName { Val = "Table Grid" }) { Type = StyleValues.Table, StyleId = "TableGrid" });
         }
 
-        private static Table RenderTable(string html, Styles styles = null)
+        private static Table RenderTable(string html, Styles styles = null, HtmlFormatterConfiguration configuration = null)
         {
-            return Render("{{ds}:html}", html, styles: styles ?? TableGridStyle()).Elements<Table>().Single();
+            return Render("{{ds}:html}", html, styles: styles ?? TableGridStyle(), configuration: configuration).Elements<Table>().Single();
+        }
+
+        private static HtmlFormatterConfiguration AutoFit => new() { TableLayout = HtmlTableLayout.AutoFit };
+
+        private static List<int> GridWidths(Table table)
+        {
+            return table.GetFirstChild<TableGrid>().Elements<GridColumn>().Select(x => int.Parse(x.Width.Value)).ToList();
         }
 
         private static BorderValues? Val(BorderType border)
@@ -35,10 +42,9 @@ namespace DocxTemplater.Html.Test
             var table = RenderTable("<table border=\"0\"><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>");
 
             var borders = table.GetFirstChild<TableProperties>().TableBorders;
+            Assert.That(borders.ChildElements, Has.Count.EqualTo(6));
             Assert.That(borders.ChildElements.Cast<BorderType>().Select(Val), Is.All.EqualTo(BorderValues.Nil));
-            var cellBorders = table.Descendants<TableCellBorders>().ToList();
-            Assert.That(cellBorders, Has.Count.EqualTo(4));
-            Assert.That(cellBorders.SelectMany(x => x.ChildElements.Cast<BorderType>()).Select(Val), Is.All.EqualTo(BorderValues.Nil));
+            Assert.That(table.Descendants<TableCellBorders>(), Is.Empty, "the table borders apply to every cell");
         }
 
         [Test]
@@ -51,9 +57,7 @@ namespace DocxTemplater.Html.Test
             Assert.That(borders.InsideHorizontalBorder.Size.Value, Is.EqualTo(6u), "1px lines between cells");
             Assert.That(borders.InsideVerticalBorder.Val.Value, Is.EqualTo(BorderValues.Single));
 
-            var firstCell = table.Descendants<TableCell>().First().TableCellProperties.TableCellBorders;
-            Assert.That(firstCell.TopBorder.Size.Value, Is.EqualTo(12u), "outer edge uses the frame");
-            Assert.That(firstCell.RightBorder.Size.Value, Is.EqualTo(6u), "inner edge uses the rules");
+            Assert.That(table.Descendants<TableCellBorders>(), Is.Empty, "same lines everywhere - written once on the table");
         }
 
         [Test]
@@ -84,17 +88,20 @@ namespace DocxTemplater.Html.Test
             Assert.That(table.GetFirstChild<TableProperties>().TableBorders.TopBorder.Val.Value, Is.EqualTo(BorderValues.Dashed));
             Assert.That(table.GetFirstChild<TableProperties>().TableBorders.TopBorder.Color.Value, Is.EqualTo("0000FF"));
 
+            var tableBorders = table.GetFirstChild<TableProperties>().TableBorders;
             // cell a: own border, left side removed
             Assert.That(cells[0].TopBorder.Color.Value, Is.EqualTo("FF0000"));
             Assert.That(Val(cells[0].LeftBorder), Is.EqualTo(BorderValues.Nil));
-            // cell b: top from the table frame, bottom from the row
-            Assert.That(cells[1].TopBorder.Val.Value, Is.EqualTo(BorderValues.Dashed));
+            // cell b: top from the table frame (not repeated on the cell), bottom from the row
+            Assert.That(cells[1].TopBorder, Is.Null);
             Assert.That(cells[1].BottomBorder.Color.Value, Is.EqualTo("CCCCCC"));
             // between cells without own borders: no rules -> nothing (like a browser)
-            Assert.That(Val(cells[2].RightBorder), Is.EqualTo(BorderValues.Nil));
-            // cell d: double top border
+            Assert.That(Val(tableBorders.InsideVerticalBorder), Is.EqualTo(BorderValues.Nil));
+            Assert.That(cells[2], Is.Null, "cell c has only the table borders");
+            // cell d: double top border, the rest from the table
             Assert.That(cells[3].TopBorder.Val.Value, Is.EqualTo(BorderValues.Double));
             Assert.That(cells[3].TopBorder.Size.Value, Is.EqualTo(18u));
+            Assert.That(cells[3].ChildElements, Has.Count.EqualTo(1));
         }
 
         [Test]
@@ -164,12 +171,15 @@ namespace DocxTemplater.Html.Test
         {
             var table = RenderTable("<table border=\"1\"><tr><td rowspan=\"3\">merged</td><td>a</td></tr><tr><td>b</td></tr><tr><td>c</td></tr></table>");
 
+            // the outer edges come from the table borders; only the inner edges of the merged cell are removed per cell
             var firstColumn = table.Elements<TableRow>().Select(r => r.Elements<TableCell>().First().TableCellProperties.TableCellBorders).ToList();
-            Assert.That(Val(firstColumn[0].TopBorder), Is.EqualTo(BorderValues.Single));
+            Assert.That(firstColumn[0].TopBorder, Is.Null);
             Assert.That(Val(firstColumn[0].BottomBorder), Is.EqualTo(BorderValues.Nil));
             Assert.That(Val(firstColumn[1].TopBorder), Is.EqualTo(BorderValues.Nil));
-            Assert.That(Val(firstColumn[2].BottomBorder), Is.EqualTo(BorderValues.Single));
-            Assert.That(firstColumn.All(x => Val(x.LeftBorder) == BorderValues.Single));
+            Assert.That(Val(firstColumn[1].BottomBorder), Is.EqualTo(BorderValues.Nil));
+            Assert.That(Val(firstColumn[2].TopBorder), Is.EqualTo(BorderValues.Nil));
+            Assert.That(firstColumn[2].BottomBorder, Is.Null);
+            Assert.That(firstColumn.All(x => x.LeftBorder == null));
         }
 
         [Test]
@@ -181,7 +191,7 @@ namespace DocxTemplater.Html.Test
                          <tr><td style="font-size: 10pt"><b>-</b></td><td style="font-size: 10pt"></td><td style="font-size: 10pt"><b>Con coeficientes de combinaci&#243;n</b></td></tr>
                        </table>
                        """;
-            var table = RenderTable(html);
+            var table = RenderTable(html, configuration: AutoFit);
 
             var tableWidth = table.GetFirstChild<TableProperties>().TableWidth;
             Assert.That(tableWidth.Type.Value, Is.EqualTo(TableWidthUnitValues.Auto), "Word sizes the table to its content");
@@ -197,7 +207,7 @@ namespace DocxTemplater.Html.Test
         public void TableWithoutWidthWrapsWhenContentIsWiderThanThePage()
         {
             var longText = string.Join(" ", Enumerable.Repeat("long words", 60));
-            var table = RenderTable($"<table><tr><td>short</td><td>{longText}</td></tr></table>");
+            var table = RenderTable($"<table><tr><td>short</td><td>{longText}</td></tr></table>", configuration: AutoFit);
 
             Assert.That(table.GetFirstChild<TableProperties>().TableWidth.Type.Value, Is.EqualTo(TableWidthUnitValues.Pct), "full width when the content does not fit");
             var grid = table.GetFirstChild<TableGrid>().Elements<GridColumn>().Select(x => int.Parse(x.Width.Value)).ToList();
@@ -245,7 +255,7 @@ namespace DocxTemplater.Html.Test
         public void TableWithoutWidthFullWidthOption()
         {
             var body = Render("{{ds}:html}", "<table><tr><td>-</td><td>text</td></tr></table>", styles: TableGridStyle(),
-                configuration: new HtmlFormatterConfiguration { TablesWithoutWidth = HtmlTableWidth.FullWidth });
+                configuration: new HtmlFormatterConfiguration { TablesWithoutWidth = HtmlTableWidth.FullWidth, TableLayout = HtmlTableLayout.AutoFit });
             var table = body.Elements<Table>().Single();
 
             Assert.That(table.GetFirstChild<TableProperties>().TableWidth.Width.Value, Is.EqualTo("5000"));
@@ -261,6 +271,95 @@ namespace DocxTemplater.Html.Test
             var borders = table.GetFirstChild<TableProperties>().TableBorders;
             Assert.That(Val(borders.InsideHorizontalBorder), Is.EqualTo(BorderValues.Single));
             Assert.That(table.GetFirstChild<TableProperties>().TableStyle, Is.Null);
+        }
+
+        [Test]
+        public void FixedLayoutWritesFinalColumnWidths()
+        {
+            var table = RenderTable("<table><tr><td>a</td><td>some longer text</td></tr></table>");
+
+            var properties = table.GetFirstChild<TableProperties>();
+            Assert.That(properties.TableLayout.Type.Value, Is.EqualTo(TableLayoutValues.Fixed));
+            Assert.That(properties.TableWidth.Type.Value, Is.EqualTo(TableWidthUnitValues.Dxa));
+            var grid = GridWidths(table);
+            Assert.That(properties.TableWidth.Width.Value, Is.EqualTo(grid.Sum().ToString()), "the table is as wide as its columns");
+            Assert.That(table.Descendants<TableCellWidth>().Select(x => int.Parse(x.Width.Value)), Is.EqualTo(grid));
+            Assert.That(table.Descendants<TableCellWidth>().Select(x => x.Type.Value), Is.All.EqualTo(TableWidthUnitValues.Dxa));
+        }
+
+        [Test]
+        public void NumbersDoNotWrapInNarrowColumns()
+        {
+            // the html asks for 20pt columns in a 225pt table, "1.350" at 10pt needs about 36pt with the cell margins
+            var columns = string.Concat(Enumerable.Repeat("<col width=\"27\">", 8));
+            var cells = string.Concat(Enumerable.Repeat("<td>1.350</td>", 8));
+            var table = RenderTable($"<table width=\"300\" style=\"font-size: 10pt\"><colgroup>{columns}</colgroup><tr>{cells}</tr></table>");
+
+            var grid = GridWidths(table);
+            Assert.That(grid, Is.All.InRange(700, 800), "each column holds the number on one line");
+            Assert.That(grid.Sum(), Is.GreaterThan(4500), "the table grows beyond its html width, like in a browser");
+        }
+
+        [Test]
+        public void TooWideTableTakesTheSpaceFromTheTextColumns()
+        {
+            var text = string.Join(" ", Enumerable.Repeat("description", 40));
+            var numbers = string.Concat(Enumerable.Repeat("<td>12.345</td>", 6));
+            var table = RenderTable($"<table><tr><td>{text}</td>{numbers}</tr></table>");
+
+            var grid = GridWidths(table);
+            Assert.That(grid.Sum(), Is.InRange(9300, 9400), "the table fits the text width");
+            Assert.That(grid.Skip(1).Distinct().Count(), Is.EqualTo(1));
+            Assert.That(grid[1], Is.InRange(850, 1000), "the numbers keep their width (11pt)");
+            Assert.That(grid[0], Is.GreaterThan(grid[1]), "the text column wraps");
+        }
+
+        [Test]
+        public void NumericColumnsShrinkLastWhenNothingFits()
+        {
+            var words = string.Concat(Enumerable.Repeat("<td>Pneumonoultramicroscopicsilicovolcanoconiosis</td>", 3));
+            var table = RenderTable($"<table><tr>{words}<td>1.350</td></tr></table>");
+
+            var grid = GridWidths(table);
+            Assert.That(grid.Sum(), Is.InRange(9300, 9400));
+            Assert.That(grid[3], Is.InRange(700, 900), "the narrow column keeps its width, the long words are cut");
+        }
+
+        [Test]
+        public void HeaderRowsWithoutTheadRepeatOnEveryPage()
+        {
+            var table = RenderTable("<table><tr><th>a</th><th>b</th></tr><tr><th>row</th><td>1</td></tr></table>");
+
+            var rows = table.Elements<TableRow>().ToList();
+            Assert.That(rows[0].TableRowProperties.GetFirstChild<TableHeader>(), Is.Not.Null);
+            Assert.That(rows[1].TableRowProperties?.GetFirstChild<TableHeader>(), Is.Null, "a row with data is no header");
+        }
+
+        [Test]
+        public void NestedTableFitsItsCell()
+        {
+            var inner = string.Join(" ", Enumerable.Repeat("nested", 50));
+            var table = RenderTable($"<table width=\"300\"><tr><td><table><tr><td>{inner}</td></tr></table></td></tr></table>");
+
+            var nested = table.Descendants<Table>().Single();
+            var outerCell = int.Parse(table.Elements<TableRow>().Single().Elements<TableCell>().Single().TableCellProperties.TableCellWidth.Width.Value);
+            Assert.That(GridWidths(nested).Sum(), Is.LessThanOrEqualTo(outerCell - (2 * 108)));
+        }
+
+        [Test]
+        public void EmptyCellsGetTheFormattingOfTheirText()
+        {
+            var template = new Paragraph(new Run(new RunProperties(new RunFonts { Ascii = "Heebo", HighAnsi = "Heebo" }, new FontSize { Val = "20" }), new Text("{{ds}:html}")));
+            var (body, document) = RenderDocument(new Body(template), "<table><tr><td>1</td><td></td></tr></table>", styles: TableGridStyle());
+
+            var paragraphs = body.Descendants<TableCell>().Select(c => c.Elements<Paragraph>().Single()).ToList();
+            var styleIds = paragraphs.Select(p => p.ParagraphProperties?.ParagraphStyleId?.Val?.Value).ToList();
+            Assert.That(styleIds, Is.All.Not.Null);
+            Assert.That(styleIds.Distinct().Count(), Is.EqualTo(1), "the empty cell's paragraph mark is formatted like the text");
+            var style = document.MainDocumentPart.StyleDefinitionsPart.Styles.Elements<Style>().Single(x => x.StyleId == styleIds[0]);
+            Assert.That(style.StyleRunProperties.RunFonts.Ascii.Value, Is.EqualTo("Heebo"));
+            Assert.That(style.StyleRunProperties.FontSize.Val.Value, Is.EqualTo("20"));
+            Assert.That(paragraphs[0].Elements<Run>().Single().RunProperties, Is.Null);
         }
     }
 }

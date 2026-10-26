@@ -25,6 +25,24 @@ namespace DocxTemplater.Html
         FullWidth,
     }
 
+    /// <summary>
+    /// How the column widths of html tables are written.
+    /// </summary>
+    public enum HtmlTableLayout
+    {
+        /// <summary>
+        /// The converter computes the final column widths (every column at least as wide as its longest word or number)
+        /// and writes them with a fixed layout. Word, LibreOffice, PDF converters and previews show the same columns.
+        /// </summary>
+        Fixed,
+
+        /// <summary>
+        /// Preferred widths with Word's autofit layout: Word re-measures the columns when the document is opened,
+        /// other applications may show different columns.
+        /// </summary>
+        AutoFit,
+    }
+
     public class HtmlFormatterConfiguration
     {
         public static readonly HtmlFormatterConfiguration Default = new();
@@ -98,6 +116,12 @@ namespace DocxTemplater.Html
         public HtmlTableWidth TablesWithoutWidth { get; set; } = HtmlTableWidth.FitContent;
 
         /// <summary>
+        /// Whether table column widths are final (<see cref="HtmlTableLayout.Fixed"/>, default) or left to Word's autofit.
+        /// Tables with css <c>table-layout: fixed</c> always use the widths of the html as they are.
+        /// </summary>
+        public HtmlTableLayout TableLayout { get; set; } = HtmlTableLayout.Fixed;
+
+        /// <summary>
         /// Name of the paragraph style applied to <c>&lt;blockquote&gt;</c>. If not found, the quote is indented and gets a left border.
         /// </summary>
         public string QuoteStyle { get; set; } = "Quote";
@@ -125,6 +149,7 @@ namespace DocxTemplater.Html
                 UnorderedListStyle = UnorderedListStyle,
                 TableStyle = TableStyle,
                 TablesWithoutWidth = TablesWithoutWidth,
+                TableLayout = TableLayout,
                 QuoteStyle = QuoteStyle,
                 MonospaceFont = MonospaceFont,
                 ReplacePlaceholdersInHtml = ReplacePlaceholdersInHtml,

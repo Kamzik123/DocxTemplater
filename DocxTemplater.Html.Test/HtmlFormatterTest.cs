@@ -34,6 +34,80 @@ namespace DocxTemplater.Html.Test
         }
 
         [Test]
+        public void RepeatedRunFormattingMovesIntoAParagraphStyle()
+        {
+            var template = new Paragraph(new Run(
+                new RunProperties(new RunFonts { Ascii = "Heebo", HighAnsi = "Heebo" }, new FontSize { Val = "20" }, new Languages { Val = "es-ES" }),
+                new Text("{{ds}:html}")));
+            var (body, document) = RenderDocument(new Body(template), "<p>first</p><p>plain <b>bold</b> <span style=\"color:red\">red</span></p><p>last</p>");
+
+            var paragraphs = body.Elements<Paragraph>().ToList();
+            Assert.That(paragraphs, Has.Count.EqualTo(3));
+            var middle = paragraphs[1];
+            var styleId = middle.ParagraphProperties.ParagraphStyleId.Val.Value;
+            var style = document.MainDocumentPart.StyleDefinitionsPart.Styles.Elements<Style>().Single(x => x.StyleId == styleId);
+            Assert.That(style.StyleRunProperties.RunFonts.Ascii.Value, Is.EqualTo("Heebo"));
+            Assert.That(style.StyleRunProperties.FontSize.Val.Value, Is.EqualTo("20"));
+            Assert.That(style.StyleRunProperties.Languages.Val.Value, Is.EqualTo("es-ES"));
+
+            var runs = middle.Elements<Run>().ToList();
+            Assert.That(runs.Single(r => r.InnerText == "plain ").RunProperties, Is.Null, "everything comes from the style");
+            var bold = runs.Single(r => r.InnerText == "bold").RunProperties;
+            Assert.That(bold.ChildElements.Select(x => x.LocalName), Is.EqualTo((string[])["b", "bCs"]), "only what differs");
+            Assert.That(runs.Single(r => r.InnerText == "red").RunProperties.Color.Val.Value, Is.EqualTo("FF0000"));
+
+            // the first and the last paragraph can be merged with template text - they keep direct formatting
+            foreach (var paragraph in new[] { paragraphs[0], paragraphs[2] })
+            {
+                Assert.That(paragraph.ParagraphProperties?.ParagraphStyleId, Is.Null);
+                Assert.That(paragraph.Elements<Run>().Single().RunProperties.RunFonts.Ascii.Value, Is.EqualTo("Heebo"));
+            }
+        }
+
+        [Test]
+        public void GeneratedStylesAreSharedAcrossPlaceholders()
+        {
+            var runProperties = new RunProperties(new RunFonts { Ascii = "Heebo" }, new FontSize { Val = "16" });
+            var body = new Body(
+                new Paragraph(new Run((RunProperties)runProperties.CloneNode(true), new Text("{{ds}:html}"))),
+                new Paragraph(new Run((RunProperties)runProperties.CloneNode(true), new Text("{{ds}:html}"))));
+            var (result, document) = RenderDocument(body, "<p>a</p><p>b</p><p>c</p>");
+
+            var styled = result.Elements<Paragraph>().Select(p => p.ParagraphProperties?.ParagraphStyleId?.Val?.Value).Where(x => x != null).ToList();
+            Assert.That(styled, Has.Count.EqualTo(2), "the middle paragraph of each placeholder");
+            Assert.That(styled.Distinct().Count(), Is.EqualTo(1));
+            Assert.That(document.MainDocumentPart.StyleDefinitionsPart.Styles.Elements<Style>().Count(x => x.StyleId == styled[0]), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void GeneratedStylesSurviveMergingIntoAnotherDocument()
+        {
+            // an html report rendered on its own and then inserted as a sub-template into another document
+            var template = new Paragraph(new Run(new RunProperties(new RunFonts { Ascii = "Heebo", HighAnsi = "Heebo" }, new FontSize { Val = "20" }), new Text("{{ds}:html}")));
+            var (_, subDocument) = RenderDocument(new Body(template), "<table><tr><td>1.350</td><td></td></tr></table>", styles: new Styles(
+                new Style(new StyleName { Val = "Normal" }) { Type = StyleValues.Paragraph, StyleId = "Normal", Default = true }));
+            byte[] subDocumentBytes;
+            using (var copy = new MemoryStream())
+            {
+                using (subDocument.Clone(copy))
+                {
+                }
+                subDocumentBytes = copy.ToArray();
+            }
+            subDocument.Dispose();
+
+            var main = new Body(new Paragraph(new Run(new Text("{{ds.Report}:T('ds.Report')}"))));
+            var (body, document) = RenderDocument(main, new { Report = subDocumentBytes }, styles: new Styles(
+                new Style(new StyleName { Val = "Normal" }) { Type = StyleValues.Paragraph, StyleId = "Standard", Default = true }));
+
+            var cellParagraph = body.Descendants<TableCell>().First().Elements<Paragraph>().Single();
+            var styleId = cellParagraph.ParagraphProperties.ParagraphStyleId.Val.Value;
+            var style = document.MainDocumentPart.StyleDefinitionsPart.Styles.Elements<Style>().Single(x => x.StyleId == styleId);
+            Assert.That(style.StyleRunProperties.RunFonts.Ascii.Value, Is.EqualTo("Heebo"));
+            Assert.That(style.BasedOn.Val.Value, Is.EqualTo("Standard"), "based on the default paragraph style of the target");
+        }
+
+        [Test]
         public void ParagraphsAndHeadingWithoutStylesUseDirectFormatting()
         {
             var body = Render("{{ds}:html}", "<h1>Title</h1><p>One</p><p>Two</p>");
@@ -54,6 +128,18 @@ namespace DocxTemplater.Html.Test
             var heading = body.Elements<Paragraph>().First();
             Assert.That(heading.ParagraphProperties.ParagraphStyleId.Val.Value, Is.EqualTo("Nadpis1"));
             Assert.That(heading.Descendants<Run>().Single().RunProperties, Is.Null, "a style was found - no direct formatting");
+        }
+
+        [Test]
+        public void HeadingsKeepTheirStyleForTheTableOfContents()
+        {
+            var styles = new Styles(new Style(new StyleName { Val = "heading 2" }) { Type = StyleValues.Paragraph, StyleId = "Heading2" });
+            var template = new Paragraph(new Run(new RunProperties(new RunFonts { Ascii = "Heebo" }), new Text("{{ds}:html}")));
+            var (body, _) = RenderDocument(new Body(template), "<p>a</p><h2 style=\"color: red\">Heading</h2><p>b</p>", styles: styles);
+
+            var heading = body.Elements<Paragraph>().ElementAt(1);
+            Assert.That(heading.ParagraphProperties.ParagraphStyleId.Val.Value, Is.EqualTo("Heading2"));
+            Assert.That(heading.Elements<Run>().Single().RunProperties.Color.Val.Value, Is.EqualTo("FF0000"));
         }
 
         [Test]

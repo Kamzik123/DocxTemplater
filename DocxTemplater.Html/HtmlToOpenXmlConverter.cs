@@ -31,6 +31,8 @@ namespace DocxTemplater.Html
             "svg", "math", "input", "button", "select", "textarea", "canvas", "audio", "video", "source", "track", "map"
         };
 
+        private static readonly Dictionary<string, string> EmptyCss = new(StringComparer.OrdinalIgnoreCase);
+
         private static readonly HashSet<string> BlockElements = new(StringComparer.OrdinalIgnoreCase)
         {
             "p", "div", "section", "article", "header", "footer", "main", "nav", "aside", "figure", "figcaption",
@@ -45,12 +47,20 @@ namespace DocxTemplater.Html
         private readonly RunProperties m_templateRunProperties;
         private readonly ParagraphProperties m_templateParagraphProperties;
         private readonly ListNumbering m_listNumbering;
-        private readonly int m_availableWidthTwips;
+        private readonly GeneratedStyles m_generatedStyles;
         private readonly Stack<RunFormat> m_runFormats = new();
         private readonly Stack<BlockFormat> m_blockFormats = new();
+        private readonly Dictionary<(RunFormat Format, bool InheritTemplate), RunPrototype> m_runPrototypes = new();
+        private readonly Dictionary<(RunPrototype Prototype, string StyleId), RunProperties> m_styledRunProperties = new();
+        private readonly Dictionary<Paragraph, StyledParagraph> m_styledTopLevelParagraphs = new();
+        private readonly Dictionary<IElement, Dictionary<string, string>> m_cssCache = new();
 
+        private Body m_body;
         private OpenXmlCompositeElement m_container;
         private Paragraph m_paragraph;
+        private List<(Run Run, RunPrototype Prototype)> m_paragraphRuns = new();
+        private int m_availableWidthTwips;
+        private int m_tableDepth;
         private bool m_paragraphIsPreformatted;
         private bool m_lastCharWasSpace;
         private bool m_pageBreakPending;
@@ -77,6 +87,7 @@ namespace DocxTemplater.Html
             m_templateRunProperties = templateRunProperties;
             m_templateParagraphProperties = templateParagraphProperties;
             m_listNumbering = new ListNumbering(mainDocumentPart, configuration);
+            m_generatedStyles = new GeneratedStyles(mainDocumentPart);
             m_availableWidthTwips = GetAvailableWidth(mainDocumentPart);
             m_hyperlinkStyleId = FindHyperlinkStyle(mainDocumentPart);
         }
@@ -86,6 +97,7 @@ namespace DocxTemplater.Html
             var parser = new HtmlParser();
             var document = parser.ParseDocument(html);
             var body = new Body();
+            m_body = body;
             m_container = body;
             m_runFormats.Push(new RunFormat());
             m_blockFormats.Push(new BlockFormat());
@@ -94,7 +106,42 @@ namespace DocxTemplater.Html
                 WalkChildren(document.Body);
             }
             FinishParagraph();
+
+            // the first and the last paragraph may be merged into the template paragraph, which does not have
+            // the generated paragraph style - give them their run formatting back
+            if (body.FirstChild is Paragraph first)
+            {
+                RemoveGeneratedStyle(first);
+            }
+            if (body.LastChild is Paragraph last)
+            {
+                RemoveGeneratedStyle(last);
+            }
+            m_styledTopLevelParagraphs.Clear();
             return body;
+        }
+
+        /// <summary>
+        /// The inline style attribute of an element. Inside tables the parsed style is cached - the table layout
+        /// reads the style of every cell several times (widths, borders, the cell itself).
+        /// </summary>
+        private Dictionary<string, string> GetCss(IElement element)
+        {
+            var style = element.GetAttribute("style");
+            if (string.IsNullOrWhiteSpace(style))
+            {
+                return EmptyCss;
+            }
+            if (m_tableDepth == 0)
+            {
+                return CssParser.ParseStyleAttribute(style);
+            }
+            if (!m_cssCache.TryGetValue(element, out var css))
+            {
+                css = CssParser.ParseStyleAttribute(style);
+                m_cssCache[element] = css;
+            }
+            return css;
         }
 
         private void WalkChildren(INode node)
@@ -126,7 +173,7 @@ namespace DocxTemplater.Html
                 return;
             }
 
-            var css = CssParser.ParseStyleAttribute(element.GetAttribute("style"));
+            var css = GetCss(element);
             if (css.TryGetValue("display", out var display) && display.Equals("none", StringComparison.OrdinalIgnoreCase))
             {
                 return;
@@ -550,23 +597,28 @@ namespace DocxTemplater.Html
 
             if (!m_paragraphIsPreformatted)
             {
-                TrimTrailingWhitespace(m_paragraph);
+                TrimTrailingWhitespace();
             }
 
             // a trailing <br> does not create an empty line in HTML
-            var lastRun = m_paragraph.Descendants<Run>().LastOrDefault();
-            if (lastRun != null && lastRun.ChildElements.Where(x => x is not RunProperties).ToList() is [Break { Type: null }])
+            if (m_paragraphRuns.Count > 0 && m_paragraphRuns[^1].Run.FirstChild is Break { Type: null })
             {
-                lastRun.Remove();
+                m_paragraphRuns[^1].Run.Remove();
+                m_paragraphRuns.RemoveAt(m_paragraphRuns.Count - 1);
             }
 
+            ApplyRunFormatting(m_paragraph);
+            m_paragraphRuns.Clear();
             m_paragraph = null;
         }
 
-        private static void TrimTrailingWhitespace(Paragraph paragraph)
+        /// <summary>
+        /// Trailing spaces of a paragraph are not shown in html. The runs of the paragraph are tracked while it is
+        /// written (<see cref="m_paragraphRuns"/>) - each holds exactly one content element until it is formatted.
+        /// </summary>
+        private void TrimTrailingWhitespace()
         {
-            var lastText = paragraph.Descendants<Text>().LastOrDefault();
-            if (lastText == null || lastText.Parent?.NextSibling() != null)
+            if (m_paragraphRuns.Count == 0 || m_paragraphRuns[^1].Run.FirstChild is not Text lastText)
             {
                 return;
             }
@@ -577,12 +629,8 @@ namespace DocxTemplater.Html
             }
             if (trimmed.Length == 0)
             {
-                var run = lastText.Parent;
-                lastText.Remove();
-                if (run != null && run.ChildElements.All(x => x is RunProperties))
-                {
-                    run.Remove();
-                }
+                m_paragraphRuns[^1].Run.Remove();
+                m_paragraphRuns.RemoveAt(m_paragraphRuns.Count - 1);
             }
             else
             {
@@ -590,15 +638,138 @@ namespace DocxTemplater.Html
             }
         }
 
+        /// <summary>
+        /// Formats the runs of a finished paragraph. Run properties shared by all runs (font, size, language, color)
+        /// go into a generated paragraph style, which also formats the paragraph mark (e.g. the height of an empty
+        /// table cell). The runs only keep what differs - instead of a full copy of the template run properties on
+        /// every run.
+        /// </summary>
+        private void ApplyRunFormatting(Paragraph paragraph)
+        {
+            var runs = m_paragraphRuns;
+            var prototypes = new List<RunPrototype>(2);
+            foreach (var (_, prototype) in runs)
+            {
+                if (!prototypes.Contains(prototype))
+                {
+                    prototypes.Add(prototype);
+                }
+            }
+            if (prototypes.Count == 0)
+            {
+                // an empty paragraph - its mark gets the formatting text would have had at this place
+                prototypes.Add(GetRunPrototype());
+            }
+
+            var shared = new List<int>();
+            var first = prototypes[0];
+            for (var i = 0; i < first.Styleable.Count; i++)
+            {
+                var xml = first.ChildXml[first.Styleable[i]];
+                if (prototypes.All(x => x.StyleableXml.Contains(xml)))
+                {
+                    shared.Add(first.Styleable[i]);
+                }
+            }
+
+            // runs with a character style keep their direct formatting - it has to win over the character style
+            var paragraphProperties = paragraph.ParagraphProperties;
+            var styleId = shared.Count > 0 && m_generatedStyles.IsAvailable && (runs.Count == 0 || prototypes.Any(x => !x.HasRunStyle))
+                          && paragraphProperties?.OutlineLevel == null && m_generatedStyles.CanDeriveFrom(paragraphProperties?.ParagraphStyleId?.Val?.Value)
+                ? AssignGeneratedStyle(paragraph, first, shared)
+                : null;
+            var styleXml = styleId != null ? shared.Select(i => first.ChildXml[i]).ToHashSet() : null;
+
+            foreach (var (run, prototype) in runs)
+            {
+                var properties = styleId == null || prototype.HasRunStyle ? prototype.Properties : GetStyledRunProperties(prototype, styleId, styleXml);
+                if (properties != null)
+                {
+                    run.PrependChild((RunProperties)properties.CloneNode(true));
+                }
+            }
+        }
+
+        private string AssignGeneratedStyle(Paragraph paragraph, RunPrototype prototype, List<int> shared)
+        {
+            var paragraphProperties = paragraph.ParagraphProperties;
+            var originalStyleId = paragraphProperties?.ParagraphStyleId?.Val?.Value;
+            var styleId = m_generatedStyles.GetParagraphStyle(
+                originalStyleId ?? m_generatedStyles.DefaultParagraphStyleId,
+                shared.Select(i => prototype.Children[i]).ToList(),
+                shared.Select(i => prototype.ChildXml[i]).ToList());
+
+            if (paragraphProperties == null)
+            {
+                paragraphProperties = new ParagraphProperties();
+                paragraph.ParagraphProperties = paragraphProperties;
+            }
+            paragraphProperties.ParagraphStyleId = new ParagraphStyleId { Val = styleId };
+            if (m_container == m_body)
+            {
+                m_styledTopLevelParagraphs[paragraph] = new StyledParagraph(originalStyleId, m_paragraphRuns.ToList());
+            }
+            return styleId;
+        }
+
+        /// <summary>
+        /// The run properties of <paramref name="prototype"/> without what the paragraph style already defines. Null if nothing is left.
+        /// </summary>
+        private RunProperties GetStyledRunProperties(RunPrototype prototype, string styleId, HashSet<string> styleXml)
+        {
+            // a style id stands for one set of run properties, so the result only depends on prototype and style
+            if (m_styledRunProperties.TryGetValue((prototype, styleId), out var cached))
+            {
+                return cached;
+            }
+            var properties = new RunProperties();
+            for (var i = 0; i < prototype.Children.Count; i++)
+            {
+                if (!styleXml.Contains(prototype.ChildXml[i]))
+                {
+                    properties.AppendChild(prototype.Children[i].CloneNode(true));
+                }
+            }
+            var result = properties.HasChildren ? properties : null;
+            m_styledRunProperties[(prototype, styleId)] = result;
+            return result;
+        }
+
+        /// <summary>
+        /// Undoes the generated style of a top level paragraph: the paragraph gets its original style back and every run
+        /// its complete run properties.
+        /// </summary>
+        private void RemoveGeneratedStyle(Paragraph paragraph)
+        {
+            if (!m_styledTopLevelParagraphs.Remove(paragraph, out var styled))
+            {
+                return;
+            }
+            var properties = paragraph.ParagraphProperties;
+            if (styled.OriginalStyleId != null)
+            {
+                properties.ParagraphStyleId = new ParagraphStyleId { Val = styled.OriginalStyleId };
+            }
+            else
+            {
+                properties.ParagraphStyleId = null;
+                if (!properties.HasChildren)
+                {
+                    paragraph.ParagraphProperties = null;
+                }
+            }
+            foreach (var (run, prototype) in styled.Runs)
+            {
+                run.RunProperties = (RunProperties)prototype.Properties?.CloneNode(true);
+            }
+        }
+
         private void AppendRun(OpenXmlElement content)
         {
             var paragraph = EnsureParagraph();
             var run = new Run();
-            var runProperties = CreateRunProperties();
-            if (runProperties != null)
-            {
-                run.RunProperties = runProperties;
-            }
+            // the run properties are set when the paragraph is finished (ApplyRunFormatting)
+            m_paragraphRuns.Add((run, GetRunPrototype()));
             run.AppendChild(content);
 
             if (m_link != null)
@@ -624,10 +795,23 @@ namespace DocxTemplater.Html
             }
         }
 
-        private RunProperties CreateRunProperties()
+        /// <summary>
+        /// The run properties for the current format - created once per distinct format and copied to the runs.
+        /// </summary>
+        private RunPrototype GetRunPrototype()
         {
-            var format = CurrentRunFormat;
-            var properties = m_blockFormats.Peek().InheritTemplateRunProperties && m_templateRunProperties != null
+            var key = (CurrentRunFormat, m_blockFormats.Peek().InheritTemplateRunProperties);
+            if (!m_runPrototypes.TryGetValue(key, out var prototype))
+            {
+                prototype = new RunPrototype(CreateRunProperties(key.CurrentRunFormat, key.InheritTemplateRunProperties));
+                m_runPrototypes[key] = prototype;
+            }
+            return prototype;
+        }
+
+        private RunProperties CreateRunProperties(RunFormat format, bool inheritTemplateRunProperties)
+        {
+            var properties = inheritTemplateRunProperties && m_templateRunProperties != null
                 ? (RunProperties)m_templateRunProperties.CloneNode(true)
                 : new RunProperties();
 
@@ -702,8 +886,10 @@ namespace DocxTemplater.Html
             var previousLastCharWasSpace = m_lastCharWasSpace;
             var previousLink = m_link;
             var previousListLevel = m_listLevel;
+            var previousRuns = m_paragraphRuns;
             m_container = container;
             m_paragraph = null;
+            m_paragraphRuns = new List<(Run Run, RunPrototype Prototype)>();
             m_link = null;
             m_listLevel = -1;
             m_blockFormats.Push(block);
@@ -719,6 +905,7 @@ namespace DocxTemplater.Html
                 m_blockFormats.Pop();
                 m_container = previousContainer;
                 m_paragraph = previousParagraph;
+                m_paragraphRuns = previousRuns;
                 m_paragraphIsPreformatted = previousPreformatted;
                 m_lastCharWasSpace = previousLastCharWasSpace;
                 m_link = previousLink;
@@ -872,7 +1059,8 @@ namespace DocxTemplater.Html
             return format;
         }
 
-        private static BlockFormat ApplyBlockCss(IElement element, Dictionary<string, string> css, BlockFormat block)
+        /// <param name="includeBox">false for table cells: their margin, padding and background belong to the cell, not to its paragraphs</param>
+        private static BlockFormat ApplyBlockCss(IElement element, Dictionary<string, string> css, BlockFormat block, bool includeBox = true)
         {
             var ownFormatting = false;
             var align = css.TryGetValue("text-align", out var textAlign) ? textAlign : element.GetAttribute("align");
@@ -883,11 +1071,11 @@ namespace DocxTemplater.Html
             }
 
             var indent = 0;
-            if (css.TryGetValue("margin-left", out var marginLeft) && CssParser.ParseLengthToTwips(marginLeft) is { } margin)
+            if (includeBox && css.TryGetValue("margin-left", out var marginLeft) && CssParser.ParseLengthToTwips(marginLeft) is { } margin)
             {
                 indent += margin;
             }
-            if (css.TryGetValue("padding-left", out var paddingLeft) && CssParser.ParseLengthToTwips(paddingLeft) is { } padding)
+            if (includeBox && css.TryGetValue("padding-left", out var paddingLeft) && CssParser.ParseLengthToTwips(paddingLeft) is { } padding)
             {
                 indent += padding;
             }
@@ -903,7 +1091,7 @@ namespace DocxTemplater.Html
                 ownFormatting = true;
             }
 
-            if ((css.TryGetValue("background-color", out var bgValue) || css.TryGetValue("background", out bgValue))
+            if (includeBox && (css.TryGetValue("background-color", out var bgValue) || css.TryGetValue("background", out bgValue))
                 && CssParser.ParseColor(bgValue) is { } background)
             {
                 block = block with { ShadingFill = background };
@@ -1101,7 +1289,7 @@ namespace DocxTemplater.Html
         private void WriteListItem(IElement item, int numberingId, int level, RunFormat listFormat)
         {
             FinishParagraph();
-            var css = CssParser.ParseStyleAttribute(item.GetAttribute("style"));
+            var css = GetCss(item);
             if (css.TryGetValue("display", out var display) && display.Equals("none", StringComparison.OrdinalIgnoreCase))
             {
                 return;
@@ -1327,6 +1515,39 @@ namespace DocxTemplater.Html
             /// </summary>
             public bool NumberUsed { get; set; }
         }
+
+        /// <summary>
+        /// Run properties of one format, with what is needed to move the shared ones into a paragraph style.
+        /// </summary>
+        private sealed class RunPrototype
+        {
+            // properties that can go into a paragraph style. Toggle properties (bold, italic, caps, strike...) stay on
+            // the runs: in styles they are combined with the table style by xor instead of being overridden
+            private static readonly HashSet<Type> StyleableTypes =
+            [
+                typeof(RunFonts), typeof(Color), typeof(Spacing), typeof(Kern), typeof(FontSize), typeof(FontSizeComplexScript),
+                typeof(Languages), typeof(NoProof)
+            ];
+
+            public RunPrototype(RunProperties properties)
+            {
+                Properties = properties;
+                Children = properties?.ChildElements.ToList() ?? [];
+                ChildXml = Children.Select(x => x.OuterXml).ToList();
+                Styleable = Enumerable.Range(0, Children.Count).Where(i => StyleableTypes.Contains(Children[i].GetType())).ToList();
+                StyleableXml = Styleable.Select(i => ChildXml[i]).ToHashSet();
+                HasRunStyle = properties?.RunStyle != null;
+            }
+
+            public RunProperties Properties { get; }
+            public IReadOnlyList<OpenXmlElement> Children { get; }
+            public IReadOnlyList<string> ChildXml { get; }
+            public IReadOnlyList<int> Styleable { get; }
+            public HashSet<string> StyleableXml { get; }
+            public bool HasRunStyle { get; }
+        }
+
+        private sealed record StyledParagraph(string OriginalStyleId, List<(Run Run, RunPrototype Prototype)> Runs);
 
         private sealed class LinkContext
         {

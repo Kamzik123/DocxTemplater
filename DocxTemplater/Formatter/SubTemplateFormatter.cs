@@ -118,7 +118,10 @@ namespace DocxTemplater.Formatter
             {
                 var parent = target.GetFirstAncestor<Paragraph>() ?? throw new OpenXmlTemplateException("Could not find parent to insert template");
                 OpenXmlElement insertionPoint = parent.SplitAfterElement(target).First();
-                foreach (var childParagaphs in body.ChildElements)
+                // a document loaded from byte[] / Stream is parsed for this insertion only - its elements are moved
+                // instead of copied, a deep copy of a large document costs as much as parsing it again
+                var moveElements = loaded.SourceDocument != null;
+                foreach (var childParagaphs in body.ChildElements.ToList())
                 {
                     if (childParagaphs is SectionProperties)
                     {
@@ -126,9 +129,18 @@ namespace DocxTemplater.Formatter
                         // middle of the target body would produce an invalid document and an unwanted section break
                         continue;
                     }
-                    var clone = childParagaphs.CloneNode(true);
-                    insertionPoint = insertionPoint.InsertAfterSelf(clone);
-                    insertedElements.Add(clone);
+                    OpenXmlElement inserted;
+                    if (moveElements)
+                    {
+                        childParagaphs.Remove();
+                        inserted = childParagaphs;
+                    }
+                    else
+                    {
+                        inserted = childParagaphs.CloneNode(true);
+                    }
+                    insertionPoint = insertionPoint.InsertAfterSelf(inserted);
+                    insertedElements.Add(inserted);
                 }
             }
             else if (templateElement is Paragraph paragraph)
@@ -196,6 +208,7 @@ namespace DocxTemplater.Formatter
             // Re-import parts referenced by the inserted content (images, external links) from the source
             // document into the target part, remapping relationship ids so they resolve. Without this the
             // clones keep the source's relationship ids and the referenced media is lost.
+            // Styles the content uses (paragraph, character and table styles) are copied as well.
             var sourcePart = loaded.SourceDocument?.MainDocumentPart;
             if (sourcePart != null && targetPart != null)
             {
@@ -204,7 +217,9 @@ namespace DocxTemplater.Formatter
                     idMap = new Dictionary<string, string>(StringComparer.Ordinal);
                     m_importedRelationshipIds[(loaded.Value, targetPart)] = idMap;
                 }
-                ImportReferencedParts(sourcePart, targetPart, insertedElements, idMap);
+                var styleIds = new HashSet<string>(StringComparer.Ordinal);
+                ImportReferencedParts(sourcePart, targetPart, insertedElements, idMap, styleIds);
+                ImportStyles(sourcePart, templateContext.MainDocumentPart, styleIds);
             }
 
             target.RemoveWithEmptyParent();
@@ -223,12 +238,31 @@ namespace DocxTemplater.Formatter
 
         // Copies parts referenced by the inserted elements (via r:embed / r:id / r:link) from the source part
         // into the target part and rewrites the relationship ids on the clones so they resolve in the target.
-        private static void ImportReferencedParts(OpenXmlPart source, OpenXmlPart target, List<OpenXmlElement> insertedElements, Dictionary<string, string> idMap)
+        // Collects the ids of the styles the elements use on the way.
+        private static void ImportReferencedParts(OpenXmlPart source, OpenXmlPart target, List<OpenXmlElement> insertedElements, Dictionary<string, string> idMap,
+            HashSet<string> styleIds)
         {
             foreach (var root in insertedElements)
             {
                 foreach (var element in SelfAndDescendants(root))
                 {
+                    // most elements (runs, texts, ...) have no attributes - skip them without allocating the attribute list
+                    if (!element.HasAttributes)
+                    {
+                        continue;
+                    }
+                    var styleId = element switch
+                    {
+                        ParagraphStyleId paragraphStyle => paragraphStyle.Val?.Value,
+                        RunStyle runStyle => runStyle.Val?.Value,
+                        TableStyle tableStyle => tableStyle.Val?.Value,
+                        _ => null
+                    };
+                    if (styleId != null)
+                    {
+                        styleIds.Add(styleId);
+                        continue;
+                    }
                     foreach (var attribute in element.GetAttributes())
                     {
                         if (attribute.NamespaceUri != RelationshipNamespace || string.IsNullOrEmpty(attribute.Value))
@@ -248,6 +282,81 @@ namespace DocxTemplater.Formatter
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Copies the styles with the given ids (and the styles they are based on or linked to) from the source document,
+        /// unless the target already has a style with that id - like Word's "use destination styles". The source's default
+        /// paragraph style is not copied: the target's default paragraph style takes its place.
+        /// </summary>
+        private static void ImportStyles(MainDocumentPart source, MainDocumentPart target, HashSet<string> styleIds)
+        {
+            var sourceStyles = source.StyleDefinitionsPart?.Styles;
+            if (styleIds.Count == 0 || sourceStyles == null || target == null)
+            {
+                return;
+            }
+
+            var sourceById = new Dictionary<string, Style>(StringComparer.Ordinal);
+            foreach (var style in sourceStyles.Elements<Style>())
+            {
+                if (style.StyleId?.Value is { } id)
+                {
+                    sourceById.TryAdd(id, style);
+                }
+            }
+            var targetStyles = target.StyleDefinitionsPart?.Styles;
+            var targetIds = new HashSet<string>(
+                targetStyles?.Elements<Style>().Select(x => x.StyleId?.Value).Where(x => x != null) ?? [], StringComparer.Ordinal);
+            var sourceDefault = DefaultParagraphStyleId(sourceStyles);
+            var targetDefault = targetStyles != null ? DefaultParagraphStyleId(targetStyles) : null;
+
+            var pending = new Queue<string>(styleIds);
+            while (pending.Count > 0)
+            {
+                var id = pending.Dequeue();
+                if (targetIds.Contains(id) || (id == sourceDefault && targetDefault != null) || !sourceById.TryGetValue(id, out var style))
+                {
+                    continue;
+                }
+
+                if (targetStyles == null)
+                {
+                    var stylesPart = target.StyleDefinitionsPart ?? target.AddNewPart<StyleDefinitionsPart>();
+                    stylesPart.Styles ??= new Styles();
+                    targetStyles = stylesPart.Styles;
+                }
+
+                var clone = (Style)style.CloneNode(true);
+                // a copied style never replaces the default style of the target
+                clone.Default = null;
+                if (clone.BasedOn?.Val?.Value is { } basedOn)
+                {
+                    if (basedOn == sourceDefault && targetDefault != null)
+                    {
+                        clone.BasedOn.Val = targetDefault;
+                    }
+                    else
+                    {
+                        pending.Enqueue(basedOn);
+                    }
+                }
+                if (clone.LinkedStyle?.Val?.Value is { } linked)
+                {
+                    pending.Enqueue(linked);
+                }
+                if (clone.NextParagraphStyle?.Val?.Value is { } next)
+                {
+                    pending.Enqueue(next);
+                }
+                targetStyles.AppendChild(clone);
+                targetIds.Add(id);
+            }
+        }
+
+        private static string DefaultParagraphStyleId(Styles styles)
+        {
+            return styles.Elements<Style>().FirstOrDefault(x => x.Type?.Value == StyleValues.Paragraph && x.Default?.Value == true)?.StyleId?.Value;
         }
 
         private static string CopyRelationship(OpenXmlPart source, OpenXmlPart target, string relationshipId)
