@@ -325,6 +325,58 @@ namespace DocxTemplater.Html.Test
             Assert.That(grid[3], Is.InRange(700, 900), "the narrow column keeps its width, the long words are cut");
         }
 
+        private static string ReactionsTable(int rowCount, string tableAttributes = "")
+        {
+            // like a reactions listing: one text column and 16 numeric columns that cannot all fit unbroken
+            var header = "<tr><th>Hip&#243;tesis</th>" + string.Concat(Enumerable.Range(1, 16).Select(i => $"<th>R{i}</th>")) + "</tr>";
+            var rows = Enumerable.Range(0, rowCount).Select(r =>
+                $"<tr><td>{(r % 3 == 0 ? "Sobrecarga (Uso A)" : r % 3 == 1 ? "Peso propio" : "Viento")}</td>"
+                + string.Concat(Enumerable.Range(0, 16).Select(c => $"<td>{(r + c) % 10}.{((r * 16) + c) % 1000:000}</td>")) + "</tr>");
+            return $"<table {tableAttributes} style=\"font-size: 10pt\"><thead>{header}</thead><tbody>{string.Concat(rows)}</tbody></table>";
+        }
+
+        [Test]
+        public void ColumnsThatCannotFitAreSizedForTheFewestLines()
+        {
+            var table = RenderTable(ReactionsTable(30));
+
+            var grid = GridWidths(table);
+            Assert.That(grid.Sum(), Is.InRange(9300, 9400), "the table keeps the text width");
+            var numeric = grid.Skip(1).ToList();
+            Assert.That(numeric.Max() - numeric.Min(), Is.LessThan(100), "the numeric columns are alike");
+            Assert.That(grid[0], Is.GreaterThan(numeric.Average() * 1.5), "the text column is not squeezed to an equal share");
+        }
+
+        [Test]
+        public void LargeTableColumnWidthsAreFast()
+        {
+            var html = ReactionsTable(3000);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var table = RenderTable(html);
+            watch.Stop();
+
+            Assert.That(GridWidths(table).Sum(), Is.InRange(9300, 9400));
+            Assert.That(watch.Elapsed, Is.LessThan(TimeSpan.FromSeconds(10)));
+        }
+
+        [Test]
+        public void ConfiguredCellMarginsForTablesWithoutPadding()
+        {
+            var configuration = new HtmlFormatterConfiguration { TableCellHorizontalMargin = 57 };
+            var table = RenderTable(ReactionsTable(30), configuration: configuration);
+
+            var margins = table.GetFirstChild<TableProperties>().TableCellMarginDefault;
+            Assert.That(margins.TableCellLeftMargin.Width.Value, Is.EqualTo((short)57));
+            Assert.That(margins.TableCellRightMargin.Width.Value, Is.EqualTo((short)57));
+            Assert.That(margins.TopMargin, Is.Null, "top and bottom stay as in the table style");
+
+            var defaultGrid = GridWidths(RenderTable(ReactionsTable(30)));
+            Assert.That(GridWidths(table)[0], Is.Not.EqualTo(defaultGrid[0]), "the widths are computed with the narrower margins");
+
+            var withPadding = RenderTable("<table cellpadding=\"2\"><tr><td>a</td></tr></table>", configuration: configuration);
+            Assert.That(withPadding.GetFirstChild<TableProperties>().TableCellMarginDefault.TableCellLeftMargin.Width.Value, Is.EqualTo((short)30), "cellpadding wins");
+        }
+
         [Test]
         public void HeaderRowsWithoutTheadRepeatOnEveryPage()
         {

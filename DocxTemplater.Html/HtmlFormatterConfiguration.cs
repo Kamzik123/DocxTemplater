@@ -122,6 +122,14 @@ namespace DocxTemplater.Html
         public HtmlTableLayout TableLayout { get; set; } = HtmlTableLayout.Fixed;
 
         /// <summary>
+        /// Left and right inner margin of table cells in twips (1/20 pt) for tables whose html sets no padding
+        /// (no <c>cellpadding</c> attribute; css padding on a cell still wins). Null keeps the margins of the table style
+        /// (Word's default is 108 twips). Narrower margins, e.g. 57 twips, leave much more room for the text in tables
+        /// with many columns: with 17 columns, 108 twips on each side take about 40% of an A4 text width.
+        /// </summary>
+        public int? TableCellHorizontalMargin { get; set; }
+
+        /// <summary>
         /// Name of the paragraph style applied to <c>&lt;blockquote&gt;</c>. If not found, the quote is indented and gets a left border.
         /// </summary>
         public string QuoteStyle { get; set; } = "Quote";
@@ -150,6 +158,7 @@ namespace DocxTemplater.Html
                 TableStyle = TableStyle,
                 TablesWithoutWidth = TablesWithoutWidth,
                 TableLayout = TableLayout,
+                TableCellHorizontalMargin = TableCellHorizontalMargin,
                 QuoteStyle = QuoteStyle,
                 MonospaceFont = MonospaceFont,
                 ReplacePlaceholdersInHtml = ReplacePlaceholdersInHtml,
