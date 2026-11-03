@@ -606,7 +606,7 @@ The value in front of the formatter (here `ds`) is bound as `ds` *inside* the in
 {{#ds.Items}}{{.}:T('ds.ItemTemplate')}{{/ds.Items}}
 ```
 
-**_NOTE:_** The content is inserted by copying the OpenXML body elements into the host document. Images, links and other parts the content references are copied along. The paragraph, character and table styles it uses are copied too, unless the host document already has a style with the same id (the host's style wins). The inserted document's default paragraph style ("Normal") is replaced by the host's. Numbering definitions (list numbering) are not imported.
+**_NOTE:_** The content is inserted by copying the OpenXML body elements into the host document. Images, links and other parts the content references are copied along. The paragraph, character and table styles it uses are copied too, unless the host document already has a style with the same id (the host's style wins). The inserted document's default paragraph style ("Normal") is replaced by the host's. Numbering definitions (list numbering) are copied with new ids, so inserted lists keep their own format and don't continue a list of the host document. Picture bullets are not imported.
 
 ### Inserting sub-template as Inline Content
 

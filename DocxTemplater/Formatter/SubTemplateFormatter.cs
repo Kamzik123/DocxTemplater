@@ -22,6 +22,9 @@ namespace DocxTemplater.Formatter
         // embedding the same image again for every insertion.
         private readonly Dictionary<(object TemplateValue, OpenXmlPart TargetPart), Dictionary<string, string>> m_importedRelationshipIds = new();
 
+        // Same idea for list numbering: source numId -> numId of the copy in the target document
+        private readonly Dictionary<(object TemplateValue, MainDocumentPart Target), Dictionary<int, int>> m_importedNumberingIds = new();
+
         private readonly bool m_inlineSubTemplates;
 
         public SubTemplateFormatter(bool inlineSubTemplates)
@@ -50,7 +53,8 @@ namespace DocxTemplater.Formatter
 
             // Resolve the destination part up front: the table-row / -cell branches remove target's ancestor,
             // after which target.GetRoot() can no longer reach the owning part.
-            var targetPart = (target.GetRoot() as OpenXmlPartRootElement)?.OpenXmlPart;
+            // A placeholder in a detached tree (e.g. inside converted HTML) gets its part from the TargetPartAnnotation.
+            var targetPart = TargetPartAnnotation.GetTargetPart(target);
 
             // Optional args after the template name: a selector (p/run/tr/tc) and/or "raw".
             // "raw" inserts the sub-document verbatim, WITHOUT running the template engine over it - for
@@ -219,7 +223,20 @@ namespace DocxTemplater.Formatter
                 }
                 var styleIds = new HashSet<string>(StringComparer.Ordinal);
                 ImportReferencedParts(sourcePart, targetPart, insertedElements, idMap, styleIds);
-                ImportStyles(sourcePart, templateContext.MainDocumentPart, styleIds);
+                var importedStyles = ImportStyles(sourcePart, templateContext.MainDocumentPart, styleIds);
+
+                // numbering is defined once per document (main part) - for the inserted paragraphs and for
+                // the copied styles, which may carry their own numPr (e.g. a numbered heading style)
+                var targetMainPart = templateContext.MainDocumentPart;
+                if (targetMainPart != null)
+                {
+                    if (!m_importedNumberingIds.TryGetValue((loaded.Value, targetMainPart), out var numIdMap))
+                    {
+                        numIdMap = new Dictionary<int, int>();
+                        m_importedNumberingIds[(loaded.Value, targetMainPart)] = numIdMap;
+                    }
+                    ImportNumbering(sourcePart, targetMainPart, insertedElements.Concat(importedStyles), numIdMap);
+                }
             }
 
             target.RemoveWithEmptyParent();
@@ -289,12 +306,13 @@ namespace DocxTemplater.Formatter
         /// unless the target already has a style with that id - like Word's "use destination styles". The source's default
         /// paragraph style is not copied: the target's default paragraph style takes its place.
         /// </summary>
-        private static void ImportStyles(MainDocumentPart source, MainDocumentPart target, HashSet<string> styleIds)
+        private static List<Style> ImportStyles(MainDocumentPart source, MainDocumentPart target, HashSet<string> styleIds)
         {
+            var imported = new List<Style>();
             var sourceStyles = source.StyleDefinitionsPart?.Styles;
             if (styleIds.Count == 0 || sourceStyles == null || target == null)
             {
-                return;
+                return imported;
             }
 
             var sourceById = new Dictionary<string, Style>(StringComparer.Ordinal);
@@ -351,7 +369,96 @@ namespace DocxTemplater.Formatter
                 }
                 targetStyles.AppendChild(clone);
                 targetIds.Add(id);
+                imported.Add(clone);
             }
+
+            return imported;
+        }
+
+        /// <summary>
+        /// Copies the list definitions (w:num + its w:abstractNum) referenced by the given elements from the source
+        /// document into the target, with new ids, and rewrites the w:numId references. Without this the inserted
+        /// paragraphs keep numIds that are undefined in the target (or worse, point at an unrelated list).
+        /// </summary>
+        private static void ImportNumbering(MainDocumentPart source, MainDocumentPart target, IEnumerable<OpenXmlElement> roots, Dictionary<int, int> numIdMap)
+        {
+            var sourceNumbering = source.NumberingDefinitionsPart?.Numbering;
+            if (sourceNumbering == null)
+            {
+                return;
+            }
+
+            // numId 0 means "no numbering" - nothing to import
+            var references = roots.SelectMany(SelfAndDescendants).OfType<NumberingId>().Where(x => x.Val?.Value > 0).ToList();
+            if (references.Count == 0)
+            {
+                return;
+            }
+
+            var numberingPart = target.NumberingDefinitionsPart ?? target.AddNewPart<NumberingDefinitionsPart>();
+            numberingPart.Numbering ??= new Numbering();
+            var targetNumbering = numberingPart.Numbering;
+            var abstractIdMap = new Dictionary<int, int>();
+
+            foreach (var reference in references)
+            {
+                var sourceId = reference.Val.Value;
+                if (!numIdMap.TryGetValue(sourceId, out var newId))
+                {
+                    var sourceNum = sourceNumbering.Elements<NumberingInstance>().FirstOrDefault(x => x.NumberID?.Value == sourceId);
+                    var sourceAbstractId = sourceNum?.AbstractNumId?.Val?.Value;
+                    var sourceAbstract = sourceNumbering.Elements<AbstractNum>().FirstOrDefault(x => x.AbstractNumberId?.Value == sourceAbstractId);
+                    if (sourceNum == null || sourceAbstract == null)
+                    {
+                        continue; // undefined in the source as well - leave unchanged
+                    }
+
+                    if (!abstractIdMap.TryGetValue(sourceAbstractId.Value, out var newAbstractId))
+                    {
+                        newAbstractId = NextId(targetNumbering.Elements<AbstractNum>().Select(x => x.AbstractNumberId?.Value ?? 0));
+                        var abstractClone = (AbstractNum)sourceAbstract.CloneNode(true);
+                        abstractClone.AbstractNumberId = newAbstractId;
+                        // Word treats lists with the same nsid as one list - give the copy its own
+                        abstractClone.Nsid = new Nsid { Val = HexBinaryValue.FromString(Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant()) };
+
+                        // schema order: numPicBullet*, abstractNum*, num*, numIdMacAtCleanup?
+                        OpenXmlElement before = targetNumbering.Elements<AbstractNum>().LastOrDefault()
+                                                ?? (OpenXmlElement)targetNumbering.Elements<NumberingPictureBullet>().LastOrDefault();
+                        if (before != null)
+                        {
+                            before.InsertAfterSelf(abstractClone);
+                        }
+                        else
+                        {
+                            targetNumbering.PrependChild(abstractClone);
+                        }
+                        abstractIdMap[sourceAbstractId.Value] = newAbstractId;
+                    }
+
+                    newId = NextId(targetNumbering.Elements<NumberingInstance>().Select(x => x.NumberID?.Value ?? 0));
+                    var numClone = (NumberingInstance)sourceNum.CloneNode(true);
+                    numClone.NumberID = newId;
+                    numClone.AbstractNumId = new AbstractNumId { Val = newAbstractId };
+
+                    var cleanup = targetNumbering.GetFirstChild<NumberingIdMacAtCleanup>();
+                    if (cleanup != null)
+                    {
+                        cleanup.InsertBeforeSelf(numClone);
+                    }
+                    else
+                    {
+                        targetNumbering.AppendChild(numClone);
+                    }
+                    numIdMap[sourceId] = newId;
+                }
+
+                reference.Val = newId;
+            }
+        }
+
+        private static int NextId(IEnumerable<int> ids)
+        {
+            return ids.DefaultIfEmpty(0).Max() + 1;
         }
 
         private static string DefaultParagraphStyleId(Styles styles)

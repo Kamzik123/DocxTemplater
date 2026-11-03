@@ -72,6 +72,9 @@ namespace DocxTemplater.Html
 
                 if (configuration.ReplacePlaceholdersInHtml)
                 {
+                    // The container is detached until InsertIntoTemplate - tell formatters inside it (e.g. :T, which
+                    // imports images and styles) which part the content ends up in.
+                    container.AddAnnotation(new TargetPartAnnotation(TargetPartAnnotation.GetTargetPart(target) ?? templateContext.MainDocumentPart));
                     ReplacePlaceholders(container, templateContext);
                 }
 
