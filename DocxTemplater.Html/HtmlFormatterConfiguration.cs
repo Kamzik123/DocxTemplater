@@ -135,6 +135,19 @@ namespace DocxTemplater.Html
         public string QuoteStyle { get; set; } = "Quote";
 
         /// <summary>
+        /// Paragraph style for each heading level (1 = <c>&lt;h1&gt;</c>), by style name or id. Levels without an entry,
+        /// or whose style is not in the template, use the built-in "heading N" style.
+        /// </summary>
+        public Dictionary<int, string> HeadingStyles { get; set; } = new();
+
+        /// <summary>
+        /// If true, paragraphs with their own formatting (alignment, indentation, ...) are still based on the paragraph
+        /// style of the placeholder paragraph instead of the document's default style. Headings, list items, quotes,
+        /// preformatted text and table content are not affected.
+        /// </summary>
+        public bool ParagraphStyleFromTemplate { get; set; }
+
+        /// <summary>
         /// Font used for <c>&lt;pre&gt;</c>, <c>&lt;code&gt;</c>, <c>&lt;kbd&gt;</c> and <c>&lt;samp&gt;</c>.
         /// </summary>
         public string MonospaceFont { get; set; } = "Courier New";
@@ -160,6 +173,8 @@ namespace DocxTemplater.Html
                 TableLayout = TableLayout,
                 TableCellHorizontalMargin = TableCellHorizontalMargin,
                 QuoteStyle = QuoteStyle,
+                HeadingStyles = new Dictionary<int, string>(HeadingStyles),
+                ParagraphStyleFromTemplate = ParagraphStyleFromTemplate,
                 MonospaceFont = MonospaceFont,
                 ReplacePlaceholdersInHtml = ReplacePlaceholdersInHtml,
             };

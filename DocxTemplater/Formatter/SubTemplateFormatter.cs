@@ -419,7 +419,7 @@ namespace DocxTemplater.Formatter
                         var abstractClone = (AbstractNum)sourceAbstract.CloneNode(true);
                         abstractClone.AbstractNumberId = newAbstractId;
                         // Word treats lists with the same nsid as one list - give the copy its own
-                        abstractClone.Nsid = new Nsid { Val = HexBinaryValue.FromString(Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant()) };
+                        abstractClone.Nsid = new Nsid { Val = HexBinaryValue.FromString(Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()) };
 
                         // schema order: numPicBullet*, abstractNum*, num*, numIdMacAtCleanup?
                         OpenXmlElement before = targetNumbering.Elements<AbstractNum>().LastOrDefault()

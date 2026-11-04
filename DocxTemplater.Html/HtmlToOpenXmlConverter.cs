@@ -364,9 +364,18 @@ namespace DocxTemplater.Html
 
         private void WriteHeading(IElement element, Dictionary<string, string> css, int level)
         {
-            var styleId = ResolveParagraphStyle($"heading {level}", $"Heading{level}");
+            string styleId = null;
+            if (m_configuration.HeadingStyles.TryGetValue(level, out var configured) && !string.IsNullOrWhiteSpace(configured))
+            {
+                // a name ("My Heading 1") or an id ("MyHeading1")
+                styleId = ResolveParagraphStyle(configured, configured);
+            }
+            styleId ??= ResolveParagraphStyle($"heading {level}", $"Heading{level}");
+
             var block = m_blockFormats.Peek() with { StyleId = styleId, IsPlain = false, InheritTemplateRunProperties = false, KeepNext = true };
-            var format = CurrentRunFormat;
+            // the style defines the look - formatting of the ancestors would hide it as direct formatting on every run.
+            // Inline css on the heading itself still applies
+            var format = styleId != null ? new RunFormat() : CurrentRunFormat;
             if (styleId == null)
             {
                 // the template has no heading style - emulate it with direct formatting;
@@ -481,6 +490,18 @@ namespace DocxTemplater.Html
 
         #region Paragraph and run handling
 
+        /// <summary>
+        /// Whether a paragraph with own formatting is a body text paragraph, for <see cref="HtmlFormatterConfiguration.ParagraphStyleFromTemplate"/>.
+        /// Not: table content (the body text spacing would blow up tables), lists, and headings and quotes emulated with
+        /// direct formatting because the template has no style for them. Preformatted text has no paragraph properties
+        /// of its own - with only the template style it would look plain and be merged into the template text.
+        /// </summary>
+        private bool UsesTemplateParagraphStyle(BlockFormat block)
+        {
+            return m_tableDepth == 0 && !block.IsPlain && block.ListItem == null && !block.Preformatted
+                   && block.OutlineLevel == null && !block.QuoteBorder;
+        }
+
         private Paragraph EnsureParagraph()
         {
             if (m_paragraph != null)
@@ -497,6 +518,11 @@ namespace DocxTemplater.Html
             if (block.StyleId != null)
             {
                 properties.ParagraphStyleId = new ParagraphStyleId { Val = block.StyleId };
+            }
+            else if (m_configuration.ParagraphStyleFromTemplate && UsesTemplateParagraphStyle(block)
+                     && m_templateParagraphProperties?.ParagraphStyleId is { } templateStyle)
+            {
+                properties.ParagraphStyleId = (ParagraphStyleId)templateStyle.CloneNode(true);
             }
             if (block.KeepNext)
             {

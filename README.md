@@ -564,11 +564,17 @@ var config = new HtmlFormatterConfiguration
 {
     TableStyle = "My Table Style",
     QuoteStyle = "Intense Quote",
+    HeadingStyles = { [1] = "My Title", [2] = "MySubtitle" }, // style name or id per heading level
+    ParagraphStyleFromTemplate = true,
     MonospaceFont = "Consolas",
     ReplacePlaceholdersInHtml = false, // recommended for untrusted HTML
 };
 template.RegisterFormatter(new HtmlFormatter(config));
 ```
+
+`HeadingStyles` sets the paragraph style of each heading level. Levels without an entry, or whose style isn't in the template, use the built-in `heading N` style. Whenever a heading gets a style, formatting from its ancestors (such as a font on a wrapping `div`) is not applied to it, so the style decides the look. CSS on the heading element itself still applies.
+
+`ParagraphStyleFromTemplate` bases paragraphs with their own formatting (alignment, indentation, background) on the placeholder paragraph's style instead of the document's default style. Headings, list items, quotes, preformatted text and table content are not affected.
 
 > **Security:** `ReplacePlaceholdersInHtml` is enabled by default. Disable it when the HTML comes from users (e.g. a rich-text editor). Otherwise a user could type `{{...}}` and read any bound model value or evaluate expressions.
 
