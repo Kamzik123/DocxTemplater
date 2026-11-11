@@ -700,6 +700,8 @@ The value in front of the formatter (here `ds`) is bound as `ds` *inside* the in
 
 **_NOTE:_** The content is inserted by copying the OpenXML body elements into the host document. Images, links and other parts the content references are copied along. The paragraph, character and table styles it uses are copied too, unless the host document already has a style with the same id (the host's style wins). The inserted document's default paragraph style ("Normal") is replaced by the host's. Numbering definitions (list numbering) are copied with new ids, so inserted lists keep their own format and don't continue a list of the host document. Picture bullets are not imported.
 
+**_Section breaks:_** The inserted content takes the page setup, headers and footers of the host section that holds the placeholder. If the inserted document has section breaks, the sections with its own page setup are replaced by the host's. Sections with a different setup are kept, together with their headers and footers. Examples are the plan pages of [`fit:section`](#true-size-pages-plans-fitsection) and a landscape section. The host section continues around them. Only the part before the inserted content keeps the host's different first page and page number restart. In a table cell, section breaks aren't possible, so they are removed and the content takes the section of the table.
+
 ### Inserting sub-template as Inline Content
 
 When working with small reusable sub-templates, it may be desirable to insert their content directly into the target paragraph instead of generating a new paragraph.

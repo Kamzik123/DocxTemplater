@@ -111,6 +111,9 @@ namespace DocxTemplater.Formatter
             // Elements cloned into the target document. Their relationship references (images, external links)
             // still point at the source document's parts and must be re-imported / re-mapped below.
             var insertedElements = new List<OpenXmlElement>();
+            SubTemplateSections sections = null;
+            Paragraph sectionFirstPart = null;
+            Paragraph sectionLastPart = null;
 
             if (m_inlineSubTemplates && templateElement is Body
                 && templateElement.ChildElements is [Paragraph] or [Paragraph, SectionProperties])
@@ -121,7 +124,11 @@ namespace DocxTemplater.Formatter
             if (templateElement is Body body)
             {
                 var parent = target.GetFirstAncestor<Paragraph>() ?? throw new OpenXmlTemplateException("Could not find parent to insert template");
-                OpenXmlElement insertionPoint = parent.SplitAfterElement(target).First();
+                sections = SubTemplateSections.Prepare(body, parent);
+                var parts = parent.SplitAfterElement(target);
+                sectionFirstPart = (Paragraph)parts.First();
+                sectionLastPart = parts.Count > 1 ? (Paragraph)parts.Last() : null;
+                OpenXmlElement insertionPoint = sectionFirstPart;
                 // a document loaded from byte[] / Stream is parsed for this insertion only - its elements are moved
                 // instead of copied, a deep copy of a large document costs as much as parsing it again
                 var moveElements = loaded.SourceDocument != null;
@@ -146,6 +153,7 @@ namespace DocxTemplater.Formatter
                     insertionPoint = insertionPoint.InsertAfterSelf(inserted);
                     insertedElements.Add(inserted);
                 }
+                sections?.BeforeImport(insertedElements);
             }
             else if (templateElement is Paragraph paragraph)
             {
@@ -239,6 +247,7 @@ namespace DocxTemplater.Formatter
                 }
             }
 
+            sections?.AfterImport(sectionFirstPart, sectionLastPart, insertedElements, target);
             target.RemoveWithEmptyParent();
         }
 

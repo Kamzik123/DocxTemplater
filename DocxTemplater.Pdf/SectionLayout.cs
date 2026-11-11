@@ -209,6 +209,14 @@ namespace DocxTemplater.Pdf
         /// </summary>
         private static bool CloseContentBefore(Paragraph before, Paragraph paragraph, SectionProperties originalCopy)
         {
+            if (before != null && PdfPlacement.HasMarkers(before))
+            {
+                // e.g. the start of an inline loop: the engine removes the marker later, the section break with it
+                var closingAfterMarkers = PdfDrawings.CreateMinimalParagraph();
+                closingAfterMarkers.ParagraphProperties.SectionProperties = (SectionProperties)originalCopy.CloneNode(true);
+                paragraph.InsertBeforeSelf(closingAfterMarkers);
+                return true;
+            }
             if (before != null)
             {
                 before.ParagraphProperties ??= new ParagraphProperties();

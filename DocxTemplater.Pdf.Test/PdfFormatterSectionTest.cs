@@ -322,6 +322,42 @@ namespace DocxTemplater.Pdf.Test
         }
 
         [Test]
+        public void PlansInAnInlineLoopFollowedByText()
+        {
+            var (body, _) = Render(new Body(P("Intro"), P("{{#ds.Plans}}{{.}:pdf(fit:section)}{{/ds.Plans}}"), P("End"), A4Section()),
+                new { Plans = new[] { A3Landscape, A3Landscape, A3Landscape } });
+
+            // the empty entries: 1 pt paragraphs closing the plan sections, the rest of the loop paragraph before "End"
+            var sections = DescribeSections(body);
+            Assert.That(sections, Is.EqualTo(["A4: Intro | ", "A3L: [plan] | ", "A3L: [plan] | ", "A3L: [plan]", "A4:  | End"]), string.Join(Environment.NewLine, sections));
+        }
+
+        [Test]
+        public void DocumentWithPlansInsertedAsSubTemplate()
+        {
+            var plans = FakePdfRenderer.Pdf((FakePdfRenderer.A3Height, FakePdfRenderer.A3Width), (FakePdfRenderer.A3Height, FakePdfRenderer.A3Width));
+            var (_, appendix) = Render(new Body(P("Intro"), P("{{ds.Plans}:pdf(fit:section)}"), P("After plans"), A4Section()), new { Plans = plans });
+            byte[] appendixBytes;
+            using (var stream = new MemoryStream())
+            {
+                using (appendix.Clone(stream))
+                {
+                }
+                appendixBytes = stream.ToArray();
+            }
+            appendix.Dispose();
+
+            var hostSection = A4Section(new PageNumberType { Start = 1 }, new TitlePage());
+            var (body, _) = Render(new Body(P("Cover"), P("{{ds}:T('ds.Appendix')}"), PWithSection("", hostSection), P("Back cover"), A4Section()), new { Appendix = appendixBytes });
+
+            var sections = GetSections(body);
+            var described = DescribeSections(body);
+            Assert.That(described, Is.EqualTo(["A4: Cover | Intro", "A3L: [plan] | [plan]", "A4: After plans | ", "A4: Back cover"]), string.Join(Environment.NewLine, described));
+            Assert.That(sections.Select(x => x.Section.GetFirstChild<TitlePage>() != null), Is.EqualTo([true, false, false, false]), "only the start of the host section has a different first page");
+            Assert.That(sections.Select(x => x.Section.GetFirstChild<PageNumberType>()?.Start?.Value), Is.EqualTo(new int?[] { 1, null, null, null }));
+        }
+
+        [Test]
         public void ConditionAfterThePlanCanStillAddContent()
         {
             var (body, _) = Render(new Body(P("Intro"), P("{{ds.Plan}:pdf(fit:section)}"), P("{?{ds.More}}"), P("More text"), P("{{/}}"), A4Section()),
