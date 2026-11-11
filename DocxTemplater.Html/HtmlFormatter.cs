@@ -67,7 +67,8 @@ namespace DocxTemplater.Html
                     part != null ? root : null,
                     templateContext.ImageService,
                     target.GetFirstAncestor<Run>()?.RunProperties,
-                    templateParagraphProperties);
+                    templateParagraphProperties,
+                    target);
                 var container = converter.Convert(html);
 
                 if (configuration.ReplacePlaceholdersInHtml)

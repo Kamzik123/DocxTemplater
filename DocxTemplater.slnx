@@ -19,6 +19,10 @@
   <Project Path="DocxTemplater.Images.Test/DocxTemplater.Images.Test.csproj" />
   <Project Path="DocxTemplater.Images/DocxTemplater.Images.csproj" />
   <Project Path="DocxTemplater.Markdown/DocxTemplater.Markdown.csproj" />
+  <Project Path="DocxTemplater.Pdf.Pdfium.Test/DocxTemplater.Pdf.Pdfium.Test.csproj" />
+  <Project Path="DocxTemplater.Pdf.Pdfium/DocxTemplater.Pdf.Pdfium.csproj" />
+  <Project Path="DocxTemplater.Pdf.Test/DocxTemplater.Pdf.Test.csproj" />
+  <Project Path="DocxTemplater.Pdf/DocxTemplater.Pdf.csproj" />
   <Project Path="DocxTemplater.Test/DocxTemplater.Test.csproj" />
   <Project Path="DocxTemplater/DocxTemplater.csproj" />
 </Solution>

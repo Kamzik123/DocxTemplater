@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFrameworks>net10.0</TargetFrameworks>
+		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+		<Description>Inserts the pages of PDF files into DocxTemplater documents as pictures - scaled into the text flow or at true size on pages of their own (plans and drawings). The PDF renderer is pluggable, see DocxTemplater.Pdf.Pdfium.</Description>
+		<PackageTags>$(PackageTags);pdf;pdf-to-docx;plans</PackageTags>
+	</PropertyGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\DocxTemplater\DocxTemplater.csproj" />
+	</ItemGroup>
+</Project>

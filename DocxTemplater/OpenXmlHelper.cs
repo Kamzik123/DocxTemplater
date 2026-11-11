@@ -630,6 +630,158 @@ namespace DocxTemplater
             return inch * 914400;
         }
 
+        /// <summary>
+        /// Converts typographic points (1/72 inch, the unit of PDF page sizes) to EMU (12 700 EMU per point).
+        /// </summary>
+        public static long PointsToEmu(double points)
+        {
+            return (long)Math.Round(points * 12700);
+        }
+
+        /// <summary>
+        /// Converts twips (1/20 point, the unit of page sizes and margins in WordprocessingML) to EMU (635 EMU per twip).
+        /// </summary>
+        public static long TwipsToEmu(long twips)
+        {
+            return twips * 635;
+        }
+
+        /// <summary>
+        /// Returns the section properties that govern the given element: those of the first paragraph at or after the
+        /// element (on body level) that ends a section, otherwise the section properties of the body (last section).
+        /// Returns null if the element is not inside a document body (header, footer, detached content) or if the
+        /// document has no section properties at all.
+        /// </summary>
+        public static SectionProperties GetSectionProperties(this OpenXmlElement element)
+        {
+            ArgumentNullException.ThrowIfNull(element);
+            var block = element;
+            while (block.Parent is not null and not Body)
+            {
+                block = block.Parent;
+            }
+            if (block.Parent is not Body)
+            {
+                return null;
+            }
+            for (var current = block; current != null; current = current.NextSibling())
+            {
+                switch (current)
+                {
+                    case SectionProperties sectionProperties:
+                        return sectionProperties;
+                    case Paragraph paragraph:
+                        if (paragraph.ParagraphProperties?.SectionProperties is { } paragraphSection)
+                        {
+                            return paragraphSection;
+                        }
+                        break;
+                    case Table:
+                        // a section break can not be inside a table
+                        break;
+                    default:
+                        // e.g. a block level content control holding paragraphs
+                        var nested = current.Descendants<ParagraphProperties>().Select(x => x.SectionProperties).FirstOrDefault(x => x != null);
+                        if (nested != null)
+                        {
+                            return nested;
+                        }
+                        break;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Returns the size of the area that holds the text of a section in twips: the page size minus the margins
+        /// (and the gutter), and for multiple columns the width of one column. Missing values use Word's defaults
+        /// (US Letter, 1 inch margins). <paramref name="sectionProperties"/> may be null.
+        /// </summary>
+        public static (long WidthTwips, long HeightTwips) GetContentArea(this SectionProperties sectionProperties)
+        {
+            var pageSize = sectionProperties?.GetFirstChild<PageSize>();
+            var margin = sectionProperties?.GetFirstChild<PageMargin>();
+            long pageWidth = pageSize?.Width?.Value ?? 12240;
+            long pageHeight = pageSize?.Height?.Value ?? 15840;
+            long left = margin?.Left?.Value ?? 1440;
+            long right = margin?.Right?.Value ?? 1440;
+            long gutter = margin?.Gutter?.Value ?? 0;
+            // negative top/bottom margins mean "exactly this margin, even if the header/footer is larger"
+            long top = Math.Abs((long)(margin?.Top?.Value ?? 1440));
+            long bottom = Math.Abs((long)(margin?.Bottom?.Value ?? 1440));
+            var width = Math.Max(0, pageWidth - left - right - gutter);
+            var height = Math.Max(0, pageHeight - top - bottom);
+
+            var columns = sectionProperties?.GetFirstChild<Columns>();
+            var columnCount = columns?.ColumnCount?.Value ?? 1;
+            if (columnCount > 1)
+            {
+                var explicitColumns = columns.Elements<Column>().Where(x => x.Width?.Value != null).ToList();
+                if (columns.EqualWidth?.Value == false && explicitColumns.Count > 0)
+                {
+                    var fullWidth = width;
+                    width = explicitColumns.Min(x => ParseTwips(x.Width.Value, fullWidth));
+                }
+                else
+                {
+                    var space = ParseTwips(columns.Space?.Value, 720);
+                    width = Math.Max(0, (width - (space * (columnCount - 1))) / columnCount);
+                }
+            }
+            return (width, height);
+        }
+
+        private static long ParseTwips(string value, long defaultValue)
+        {
+            return long.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var twips) ? twips : defaultValue;
+        }
+
+        /// <summary>
+        /// Ends a section after <paramref name="lastParagraphOfFirstPart"/>: the paragraph gets a copy of the section
+        /// properties that govern it, so the content up to and including it keeps the page setup, while the original
+        /// section properties now only govern the content after it. The original loses the settings that only apply
+        /// to the start of a section (see <see cref="RemoveSectionStartSettings"/>), the copy keeps them.
+        /// Returns the copy.
+        /// </summary>
+        public static SectionProperties SplitSection(this Paragraph lastParagraphOfFirstPart)
+        {
+            ArgumentNullException.ThrowIfNull(lastParagraphOfFirstPart);
+            if (lastParagraphOfFirstPart.ParagraphProperties?.SectionProperties != null)
+            {
+                throw new ArgumentException("The paragraph already ends a section", nameof(lastParagraphOfFirstPart));
+            }
+            var governing = lastParagraphOfFirstPart.GetSectionProperties()
+                            ?? throw new ArgumentException("The paragraph is not in a section of the document body", nameof(lastParagraphOfFirstPart));
+            var copy = (SectionProperties)governing.CloneNode(true);
+            var paragraphProperties = lastParagraphOfFirstPart.ParagraphProperties ??= new ParagraphProperties();
+            paragraphProperties.SectionProperties = copy;
+            RemoveSectionStartSettings(governing);
+            return copy;
+        }
+
+        /// <summary>
+        /// Removes the settings of a section that only make sense on its first page - a different first page header
+        /// (<c>w:titlePg</c>) and a restart of the page numbering (<c>w:pgNumType/@w:start</c>). Used when a section
+        /// is split: the second part continues the first one.
+        /// </summary>
+        public static void RemoveSectionStartSettings(SectionProperties sectionProperties)
+        {
+            if (sectionProperties == null)
+            {
+                return;
+            }
+            sectionProperties.GetFirstChild<TitlePage>()?.Remove();
+            var pageNumberType = sectionProperties.GetFirstChild<PageNumberType>();
+            if (pageNumberType != null)
+            {
+                pageNumberType.Start = null;
+                if (!pageNumberType.HasAttributes)
+                {
+                    pageNumberType.Remove();
+                }
+            }
+        }
+
 
         public static int LengthToEmu(int value, string unit)
         {

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFrameworks>net10.0</TargetFrameworks>
+		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+		<Description>PDFium renderer (via PDFtoImage) for DocxTemplater.Pdf: renders PDF pages to PNG or JPEG pictures.</Description>
+		<PackageTags>$(PackageTags);pdf;pdfium;pdf-renderer</PackageTags>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="PDFtoImage" Version="[5.4.0, 6.0.0)" />
+	</ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\DocxTemplater.Pdf\DocxTemplater.Pdf.csproj" />
+	</ItemGroup>
+</Project>

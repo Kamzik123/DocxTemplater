@@ -77,7 +77,8 @@ namespace DocxTemplater.Html
             OpenXmlElement partRoot,
             IImageService imageService,
             RunProperties templateRunProperties,
-            ParagraphProperties templateParagraphProperties)
+            ParagraphProperties templateParagraphProperties,
+            OpenXmlElement placeholder = null)
         {
             m_configuration = configuration;
             m_mainDocumentPart = mainDocumentPart;
@@ -88,7 +89,7 @@ namespace DocxTemplater.Html
             m_templateParagraphProperties = templateParagraphProperties;
             m_listNumbering = new ListNumbering(mainDocumentPart, configuration);
             m_generatedStyles = new GeneratedStyles(mainDocumentPart);
-            m_availableWidthTwips = GetAvailableWidth(mainDocumentPart);
+            m_availableWidthTwips = GetAvailableWidth(mainDocumentPart, placeholder);
             m_hyperlinkStyleId = FindHyperlinkStyle(mainDocumentPart);
         }
 
@@ -1474,16 +1475,16 @@ namespace DocxTemplater.Html
 
         #endregion
 
-        private static int GetAvailableWidth(MainDocumentPart mainDocumentPart)
+        private static int GetAvailableWidth(MainDocumentPart mainDocumentPart, OpenXmlElement placeholder)
         {
-            var sectionProperties = mainDocumentPart?.Document?.Body?.Elements<SectionProperties>().LastOrDefault();
-            var pageWidth = sectionProperties?.GetFirstChild<PageSize>()?.Width?.Value;
-            var margin = sectionProperties?.GetFirstChild<PageMargin>();
-            if (pageWidth == null)
+            // the section of the placeholder; in headers, footers and detached content the last section of the document
+            var sectionProperties = placeholder?.GetSectionProperties()
+                                    ?? mainDocumentPart?.Document?.Body?.Elements<SectionProperties>().LastOrDefault();
+            if (sectionProperties?.GetFirstChild<PageSize>()?.Width?.Value == null)
             {
                 return DefaultAvailableWidthTwips;
             }
-            var available = (int)pageWidth.Value - (int)(margin?.Left?.Value ?? 1440) - (int)(margin?.Right?.Value ?? 1440);
+            var available = (int)sectionProperties.GetContentArea().WidthTwips;
             return available > 0 ? available : DefaultAvailableWidthTwips;
         }
 

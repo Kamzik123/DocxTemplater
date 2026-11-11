@@ -58,6 +58,8 @@ Enhance DocxTemplater with these optional extension packages:
 | [DocxTemplater.Images.ImageSharp](https://www.nuget.org/packages/DocxTemplater.Images.ImageSharp) |Optional ImageSharp metadata adapter for more robust image decoding|
 | [DocxTemplater.Markdown ](https://www.nuget.org/packages/DocxTemplater.Markdown)  | Allows use of Markdown syntax for generating parts of Word documents|
 | DocxTemplater.Html | Converts HTML to native Word content (paragraphs, lists, tables, images, links) - see [HTML Formatter](#html-formatter). Targets .NET 10 |
+| DocxTemplater.Pdf | Inserts the pages of PDF files as pictures - in the text flow or at true size on pages of their own (plans) - see [PDF Formatter](#pdf-formatter). Targets .NET 10 |
+| DocxTemplater.Pdf.Pdfium | PDFium renderer for `DocxTemplater.Pdf` (native binaries included, tested on Windows). Targets .NET 10 |
 
 Image metadata defaults to the dependency-free built-in header reader in `DocxTemplater.Images`.
 If you need ImageSharp's broader format handling, pass it explicitly:
@@ -102,6 +104,7 @@ The syntax is case insensitive.
 | `{{(ds.Items[0].Name)}}`                                 | Expressions with array / list / dictionary index access.                                        |
 | `{{SomeBytes}:img()}`                                    | Image Formatter for image data.                                                                 |
 | `{{SomeHtmlString}:html()}`                              | Inserts HTML string into the word document (native Word content with `DocxTemplater.Html`).    |
+| `{{SomePdf}:pdf(fit:section)}`                           | Inserts the pages of a PDF as pictures (`DocxTemplater.Pdf`), here at true size.                |
 | `{{ds}:template('ds.SubDocument')}`                      | Inserts another docx document (or OpenXML fragment) at the placeholder position.               |
 | `{{@i:ItemCount}}...{{i}}...{{/}}`                       | Range loop that repeats its content `ItemCount` times.                                          |
 | `{{#Items}}{?{Items._Idx % 2 == 0}}{{.}}{{/}}{{/Items}}` | Renders every second item in a list.                                                            |
@@ -577,6 +580,89 @@ template.RegisterFormatter(new HtmlFormatter(config));
 `ParagraphStyleFromTemplate` bases paragraphs with their own formatting (alignment, indentation, background) on the placeholder paragraph's style instead of the document's default style. Headings, list items, quotes, preformatted text and table content are not affected.
 
 > **Security:** `ReplacePlaceholdersInHtml` is enabled by default. Disable it when the HTML comes from users (e.g. a rich-text editor). Otherwise a user could type `{{...}}` and read any bound model value or evaluate expressions.
+
+---
+## PDF Formatter
+
+Inserts the pages of a PDF file into the document as pictures, one picture per page. Word cannot show PDF content natively, so the pages are rendered to PNG (or JPEG). The text of the pages is not selectable in Word. Each picture gets an alt text like `Contract, page 3 of 12`.
+
+**_NOTE:_** The NuGet packages `DocxTemplater.Pdf` and a renderer are required (both target .NET 10). `DocxTemplater.Pdf.Pdfium` renders with PDFium (Chrome's PDF engine). Its native binaries come with the package. Only Windows is tested.
+
+```csharp
+using DocxTemplater.Pdf;
+using DocxTemplater.Pdf.Pdfium;
+
+var template = new DocxTemplate(stream);
+template.RegisterFormatter(new PdfFormatter(new PdfiumPdfRenderer()));
+template.BindModel("ds", new
+{
+    Contract = File.ReadAllBytes("contract.pdf"),                                    // byte[]
+    GroundFloor = new PdfFile(File.ReadAllBytes("plan.pdf"), "Ground floor - Plan 102-A"), // with a name for alt text and overlay
+});
+```
+
+#### Usage
+
+```
+{{ds.Contract}:pdf}                               // all pages, each scaled into the text area
+{{ds.Contract}:pdf(pages:'1-3,7', dpi:200)}      // page selection and resolution
+{{ds.GroundFloor}:pdf(fit:section)}              // true size on pages of their own (plans)
+{{ds.GroundFloor}:pdf(fit:section, overlay:always)}
+```
+
+| Argument | Values | Default | Meaning |
+|----------|--------|---------|---------|
+| `pages` | `'1-3,5,8-'` (1-based) | all | Page selection. Pages that don't exist throw an exception |
+| `dpi` | 72-600 | 150 | Render resolution. Changes the file size, not the displayed size |
+| `fmt` | `png`, `jpg` | `png` | `jpg` is much smaller for scans and photos |
+| `q` | 1-100 | 85 | JPEG quality |
+| `fit` | `page`, `width`, `none`, `section` | `page` | `page`: fit into the text area. `width`: fill the text width (only for short pages). `none`: real size, scaled down if too large. `section`: true size, see below |
+| `w` / `h` | `16cm`, `40mm`, `3in`, `72pt`, `400px` | - | Explicit size, overrides `fit` (not `section`) |
+| `pb` | `true`, `false` | `false` | Page break before the first page. Pages after the first always start on a new page |
+| `border` | `true`, `false` | `false` | Thin border around each page |
+| `label` | text | `PdfFile.Name`, else `Document` | Name used in alt text and overlay |
+| `pwd` | text | - | Password. Prefer `PdfFormatterConfiguration.Password` or `PasswordProvider` |
+| `margin` | length | `0` | `fit:section` only: page margins. Anything but `0` gives up the true scale |
+| `hf` | `none`, `inherit` | `none` | `fit:section` only: empty header/footer, or keep the document's |
+| `oversize` | `scale`, `error` | `scale` | `fit:section` only: pages larger than Word allows |
+| `overlay` | `auto`, `always`, `never` | `auto` | `fit:section` only: placeholder overlay on scaled pages, on every page, or never |
+| `same` | `inline`, `section` | `inline` | `fit:section` only: PDF pages with the document's page size stay in the text flow, or also get their own section |
+
+The placeholder should be alone in its paragraph. Text before and after it stays in paragraphs of its own. In table cells, headers and footers the pages follow each other without page breaks. Text boxes are not supported. The same PDF in a loop is rendered and stored only once.
+
+#### True-size pages (plans): `fit:section`
+
+Building plans and other drawings must print to scale. With `fit:section` every PDF page gets a page of exactly its own size, in a section with no margins and an empty header and footer. The picture fills the page edge to edge at 100%. An A3 landscape plan in an A4 portrait document becomes a real A3 landscape page, and the document continues as A4 portrait after it. Page numbering continues through the plan pages. Section breaks only exist in the document body, so `fit:section` throws an exception in tables, headers, footers and text boxes.
+
+Word supports pages up to 22 inches (558.8 mm), so A2 and larger sheets don't fit. Such pages are scaled down until they fit, keeping their aspect ratio. They get a red overlay that names the original size, e.g. `Target size: A1 landscape, 841 × 594 mm (shown at 66%)`. The intended workflow for a PDF deliverable is:
+1. Generate the DOCX and proofread it.
+2. "Save as PDF" in Word. The plan pages keep their size.
+3. Replace each plan page with the matching page of the original plan PDF (e.g. Acrobat *Organize Pages → Replace*). The original vector page keeps its own size, and the page count and numbering stay correct.
+
+`overlay:always` puts the overlay on every plan page, so a forgotten swap is visible in the final PDF. To print to scale, use a printer with the right paper size and turn off "fit to page" in the print dialog.
+
+#### Configuration
+
+```csharp
+var config = new PdfFormatterConfiguration
+{
+    Dpi = 150,
+    MaxPages = 200,                     // more selected pages throw an exception
+    MaxPixelsPerPage = 100_000_000,     // larger pages are rendered with a lower dpi (or throw: ReduceDpiForLargePages = false)
+    PasswordProvider = name => LookUpPassword(name),
+    // texts of the overlay and the alt text, e.g. in German. Tokens: {name} {page} {pages} {sheet} {orientation} {width} {height} {scale}
+    OverlayTitle = "PLATZHALTER - durch Original ersetzen",
+    OverlaySizeLine = "Zielformat: {sheet} {orientation}, {width} × {height} mm (dargestellt mit {scale})",
+    OverlaySizeLineUnknownSheet = "Zielformat: {width} × {height} mm (dargestellt mit {scale})",
+    OverlaySourceLine = "Plan: {name}, Seite {page} von {pages}",
+    OrientationLandscape = "quer",
+    OrientationPortrait = "hoch",
+    AltText = "{name}, Seite {page} von {pages}",
+};
+template.RegisterFormatter(new PdfFormatter(new PdfiumPdfRenderer(), config));
+```
+
+Unknown tokens are left as they are, and an empty line template drops the line. Numbers use the culture of the template (`ProcessSettings.Culture`). Other renderers can be plugged in by implementing `IPdfRenderer`. PDFium is not thread-safe, so rendering in parallel document generations is serialized.
 
 ---
 ## Sub-Template Formatter - Inserting Documents

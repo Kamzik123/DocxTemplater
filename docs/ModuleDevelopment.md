@@ -72,7 +72,8 @@ public interface IFormatter
 ### Useful public helpers (`OpenXmlHelper`, all extension methods)
 - `SplitAfterElement` / `SplitBeforeElement`: split a paragraph at a descendant. The first part is the original element; a second part exists only if there is content after the element.
 - `GetFirstAncestor<T>`, `GetRoot`, `RemoveWithEmptyParent(preserveParagraphInCell)`, `HasOnlyPropertyChildren`
-- `FindTableStyleByName` (matches style id **or** name), `GetMaxDocPropertyId`, `PixelsToEmu`
+- `FindTableStyleByName` (matches style id **or** name), `GetMaxDocPropertyId`, `PixelsToEmu`, `PointsToEmu`, `TwipsToEmu`
+- `GetSectionProperties` (the `sectPr` governing an element, null outside the body), `GetContentArea` (text area of a section in twips, columns included), `SplitSection`, `RemoveSectionStartSettings`
 - `CreateNewAbstractNumbering` / `CreateNewNumberingInstance`: **careful**, see [pitfalls](#openxml-pitfalls-we-hit).
 
 ### Internals a block module usually needs
@@ -132,6 +133,10 @@ Guard against recursion: a nested placeholder can produce HTML that contains pla
 | Mapping html `nowrap` to `w:noWrap` | Text that does not fit the column is **cut off** (a page cannot scroll sideways like a browser) | Don't emit `noWrap`. Use nowrap only for the width estimate, since Word's autofit keeps the line unbroken when there is room |
 | Copying the template `pPr` with a `sectPr` | Extra section breaks | Remove `SectionProperties` from clones |
 | Test templates built in code | `Validate()` complains about the *template*, not your output | Build valid templates: `w:tbl` needs `tblPr` and `tblGrid` |
+| Formatter arguments with commas (`pages:'1-3,7'`) | The core splits arguments at **every** comma, also inside quotes, and `HelperFunctions.ParseArguments` rejects values with a colon | Join pieces without a `key:` back to the previous argument and split at the first colon only (`PdfArguments.Parse`) |
+| Loops render their items **last to first** (`LoopBlock` reverses the items, each item is inserted right after the start insertion point) | Logic that looks at the content *after* the placeholder sees the already rendered later items, and content *before* it is not there yet | Never assume the following content is final. Elements with an `IpId` attribute are insertion points where content arrives later. `End_...` ids only mark a block end and are removed |
+| Section breaks (`w:sectPr`) belong to the **last** paragraph of a section, the last section is `body/sectPr` | A new page size governs everything *before* it, an empty trailing section adds a blank page | See `DocxTemplater.Pdf/SectionLayout.cs`: copy the governing `sectPr` to end the content before, replace the original when nothing follows. `OpenXmlHelper.GetSectionProperties`/`SplitSection`/`RemoveSectionStartSettings` help |
+| `dotnet format` on a file that does not compile | It can silently cut off the rest of the file | Only format code that builds |
 
 Always call `docTemplate.Validate()` in tests. It runs `OpenXmlValidator` on the whole package and catches most of the above.
 
