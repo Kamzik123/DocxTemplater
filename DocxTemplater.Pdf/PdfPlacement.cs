@@ -9,7 +9,8 @@ using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 namespace DocxTemplater.Pdf
 {
     /// <summary>
-    /// A rendered page stored in an image part of the target part.
+    /// A rendered page stored in an image part of the target part. <see cref="RelationshipId"/> is null for blank
+    /// pages (<see cref="PdfContent.Blank"/>).
     /// </summary>
     internal sealed record PlacedPage(int PageIndex, double WidthPoints, double HeightPoints, string RelationshipId);
 
@@ -20,11 +21,12 @@ namespace DocxTemplater.Pdf
     {
         private uint m_nextId;
 
-        public PdfInsertContext(PdfFormatterConfiguration configuration, MainDocumentPart mainDocumentPart, string label, int pageCount, CultureInfo culture, uint firstId, Func<(string HeaderId, string FooterId)> emptyHeaderFooter)
+        public PdfInsertContext(PdfFormatterConfiguration configuration, MainDocumentPart mainDocumentPart, string label, string key, int pageCount, CultureInfo culture, uint firstId, Func<(string HeaderId, string FooterId)> emptyHeaderFooter)
         {
             Configuration = configuration;
             MainDocumentPart = mainDocumentPart;
             Label = label;
+            Key = key;
             PageCount = pageCount;
             Culture = culture ?? CultureInfo.CurrentCulture;
             m_nextId = firstId;
@@ -34,6 +36,10 @@ namespace DocxTemplater.Pdf
         public PdfFormatterConfiguration Configuration { get; }
         public MainDocumentPart MainDocumentPart { get; }
         public string Label { get; }
+
+        /// <summary>Stable id of the PDF for <c>{key}</c>; null to use the label.</summary>
+        public string Key { get; }
+
         public int PageCount { get; }
         public CultureInfo Culture { get; }
         public Func<(string HeaderId, string FooterId)> EmptyHeaderFooter { get; }
@@ -46,7 +52,7 @@ namespace DocxTemplater.Pdf
 
         public PageDescription Describe(PlacedPage page, double scale)
         {
-            return new PageDescription(Label, page.PageIndex + 1, PageCount, page.WidthPoints, page.HeightPoints, scale);
+            return new PageDescription(Label, Key, page.PageIndex + 1, PageCount, page.WidthPoints, page.HeightPoints, scale);
         }
     }
 

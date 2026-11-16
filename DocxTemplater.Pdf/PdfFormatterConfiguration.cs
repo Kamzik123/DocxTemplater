@@ -77,6 +77,21 @@ namespace DocxTemplater.Pdf
         Section,
     }
 
+    /// <summary>
+    /// What is drawn on the pages created for a PDF.
+    /// </summary>
+    public enum PdfContent
+    {
+        /// <summary>The rendered PDF page.</summary>
+        Render,
+
+        /// <summary>
+        /// Nothing: an empty page of the PDF page's size in a section of its own, to be replaced by the original page
+        /// after the export to PDF. The PDF is only read for its page count and page sizes, nothing is rendered.
+        /// </summary>
+        Blank,
+    }
+
     public class PdfFormatterConfiguration
     {
         /// <summary>
@@ -102,6 +117,22 @@ namespace DocxTemplater.Pdf
 
         /// <summary>How pages are sized and placed. Template argument <c>fit</c>.</summary>
         public PdfFit Fit { get; set; } = PdfFit.Page;
+
+        /// <summary>
+        /// What the pages show. Template argument <c>content</c> (<c>render</c>, <c>blank</c>). <see cref="PdfContent.Blank"/>
+        /// always lays out the pages like <see cref="PdfFit.Section"/> (whatever <see cref="Fit"/> says), gives every page
+        /// a section of its own (<see cref="SamePageSize"/> is ignored) and ignores the render settings.
+        /// </summary>
+        public PdfContent Content { get; set; } = PdfContent.Render;
+
+        /// <summary>
+        /// Machine-readable text written on every page in a section of its own (<see cref="PdfFit.Section"/>,
+        /// <see cref="PdfContent.Blank"/>), invisible (white, 1 pt), so a tool can find the page in the exported PDF and
+        /// replace it with the original page. Null or empty: no marker. Tokens as in the overlay lines plus <c>{key}</c>.
+        /// Line breaks are replaced with spaces. Template argument <c>marker</c>: the template syntax does not allow braces
+        /// in arguments, so tokens are written <c>%key%</c> there, e.g. <c>marker:'[[PDF|%key%|%page%|%pages%]]'</c>.
+        /// </summary>
+        public string MarkerText { get; set; }
 
         /// <summary>
         /// Explicit maximum width of a page picture in EMU (360 000 per cm); overrides <see cref="Fit"/> (except
@@ -134,6 +165,11 @@ namespace DocxTemplater.Pdf
 
         /// <summary>Name of the document, overrides <see cref="PdfFile.Name"/>. Template argument <c>label</c>.</summary>
         public string Label { get; set; }
+
+        /// <summary>
+        /// Stable id of the document for <c>{key}</c>, overrides <see cref="PdfFile.Key"/>. Template argument <c>key</c>.
+        /// </summary>
+        public string Key { get; set; }
 
         /// <summary>
         /// Password for encrypted PDFs. Template argument <c>pwd</c> (prefer the configuration - templates are no secret store).
@@ -196,7 +232,7 @@ namespace DocxTemplater.Pdf
 
         /// <summary>
         /// Size line of the overlay. Tokens: <c>{sheet}</c>, <c>{orientation}</c>, <c>{width}</c>, <c>{height}</c>
-        /// (mm), <c>{scale}</c>, <c>{name}</c>, <c>{page}</c>, <c>{pages}</c>. An empty text drops the line.
+        /// (mm), <c>{scale}</c>, <c>{name}</c>, <c>{key}</c>, <c>{page}</c>, <c>{pages}</c>. An empty text drops the line.
         /// </summary>
         public string OverlaySizeLine { get; set; } = "Target size: {sheet} {orientation}, {width} × {height} mm (shown at {scale})";
 

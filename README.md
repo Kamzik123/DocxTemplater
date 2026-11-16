@@ -608,6 +608,7 @@ template.BindModel("ds", new
 {{ds.Contract}:pdf(pages:'1-3,7', dpi:200)}      // page selection and resolution
 {{ds.GroundFloor}:pdf(fit:section)}              // true size on pages of their own (plans)
 {{ds.GroundFloor}:pdf(fit:section, overlay:always)}
+{{ds.DataSheet}:pdf(content:blank, marker:'[[PDF|%key%|%page%|%pages%]]')}  // empty pages to swap after the PDF export
 ```
 
 | Argument | Values | Default | Meaning |
@@ -627,6 +628,9 @@ template.BindModel("ds", new
 | `oversize` | `scale`, `error` | `scale` | `fit:section` only: pages larger than Word allows |
 | `overlay` | `auto`, `always`, `never` | `auto` | `fit:section` only: placeholder overlay on scaled pages, on every page, or never |
 | `same` | `inline`, `section` | `inline` | `fit:section` only: PDF pages with the document's page size stay in the text flow, or also get their own section |
+| `content` | `render`, `blank` | `render` | `blank`: empty pages instead of pictures, see below |
+| `marker` | text | - | Invisible text on every page in a section of its own, to find it in the exported PDF. Tokens are written `%page%` here |
+| `key` | text | `PdfFile.Key`, else the label | Stable id of the PDF for the token `{key}` |
 
 The placeholder should be alone in its paragraph. Text before and after it stays in paragraphs of its own. In table cells, headers and footers the pages follow each other without page breaks. Text boxes are not supported. The same PDF in a loop is rendered and stored only once.
 
@@ -641,6 +645,12 @@ Word supports pages up to 22 inches (558.8 mm), so A2 and larger sheets don't fi
 
 `overlay:always` puts the overlay on every plan page, so a forgotten swap is visible in the final PDF. To print to scale, use a printer with the right paper size and turn off "fit to page" in the print dialog.
 
+#### Empty pages to replace after the export: `content:blank`
+
+If the original PDF pages will replace the inserted ones anyway, nothing needs to be rendered. `content:blank` reads only the page count and page sizes and creates one empty page per selected PDF page, each in a section of the PDF page's size (like `fit:section`, whatever `fit` says, and also for pages of the document's size). The docx stays small, and page numbers, `NUMPAGES`, the table of contents and cross-references are already right in Word, because the empty pages are real pages. After "Save as PDF", replace each empty page with its original page (*Replace Pages*, not *Insert Pages*). `hf`, `margin`, `pages`, `oversize` and `overlay` work as with `fit:section`, the render settings (`dpi`, `fmt`, `q`, `border`, ...) are ignored. `overlay:always` shows a visible "replace me" box on every empty page.
+
+To automate the swap, `marker` writes a machine-readable line on each page, as white 1 pt text: invisible and not printed, but exported to the PDF (hidden text, bookmarks and alt text are not reliably). For example `marker:'[[PDF|%key%|%page%|%pages%]]'` gives `[[PDF|sheet3|2|5]]` on the page for page 2 of 5 of the PDF with the key `sheet3`. A tool can extract the page texts of the exported PDF, find the markers and replace those pages. `{key}` is `PdfFile.Key` (`new PdfFile(bytes, name, Key: "sheet3")`), the `key` argument, or else the label. `marker` also works with `fit:section` pictures. Template arguments can't contain braces, so tokens are written `%token%` there, while `PdfFormatterConfiguration.MarkerText` takes the usual `{token}`.
+
 #### Configuration
 
 ```csharp
@@ -650,7 +660,8 @@ var config = new PdfFormatterConfiguration
     MaxPages = 200,                     // more selected pages throw an exception
     MaxPixelsPerPage = 100_000_000,     // larger pages are rendered with a lower dpi (or throw: ReduceDpiForLargePages = false)
     PasswordProvider = name => LookUpPassword(name),
-    // texts of the overlay and the alt text, e.g. in German. Tokens: {name} {page} {pages} {sheet} {orientation} {width} {height} {scale}
+    MarkerText = "[[PDF|{key}|{page}|{pages}]]", // invisible marker on section pages (default: none)
+    // texts of the overlay and the alt text, e.g. in German. Tokens: {name} {key} {page} {pages} {sheet} {orientation} {width} {height} {scale}
     OverlayTitle = "PLATZHALTER - durch Original ersetzen",
     OverlaySizeLine = "Zielformat: {sheet} {orientation}, {width} × {height} mm (dargestellt mit {scale})",
     OverlaySizeLineUnknownSheet = "Zielformat: {width} × {height} mm (dargestellt mit {scale})",

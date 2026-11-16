@@ -10,6 +10,7 @@ namespace DocxTemplater.Pdf
     /// <c>fit:section</c>: every PDF page gets a page of exactly its own size. Consecutive pages of the same size
     /// share a section without margins (and by default without header and footer); the picture is anchored to the
     /// page at (0,0) and has the size of the page. The document around the pages keeps its own page setup.
+    /// <c>content:blank</c> uses the same layout with empty pages (no picture), each in a section.
     /// </summary>
     /// <remarks>
     /// A section's page setup is stored in the <c>w:sectPr</c> of its last paragraph (the last section in
@@ -43,7 +44,7 @@ namespace DocxTemplater.Pdf
             if (paragraph?.Parent is not Body body || body.Parent is not Document)
             {
                 throw new OpenXmlTemplateException(
-                    "pdf fit:section is only possible in a paragraph of the document body - not in tables, text boxes, " +
+                    "pdf fit:section and content:blank are only possible in a paragraph of the document body - not in tables, text boxes, " +
                     "headers, footers or content controls, because these cannot hold section breaks");
             }
         }
@@ -318,7 +319,10 @@ namespace DocxTemplater.Pdf
                 var height = (long)Math.Round(exactHeight);
                 var isSection = true;
                 var scaled = false;
+                // blank pages always get a section: an empty page in the text flow could merge with other content
+                // and break the 1:1 page count
                 if (m_configuration.SamePageSize == PdfSamePageSize.Inline
+                    && m_configuration.Content != PdfContent.Blank
                     && Math.Abs(width - documentWidth) <= SizeToleranceTwips
                     && Math.Abs(height - documentHeight) <= SizeToleranceTwips)
                 {
@@ -406,12 +410,17 @@ namespace DocxTemplater.Pdf
                     altText = string.Join(Environment.NewLine, new[] { altText }.Concat(overlayLines).Where(x => !string.IsNullOrEmpty(x)));
                 }
             }
-            drawings.Add(PdfDrawings.CreatePageAnchor(page.RelationshipId, m_context.NextId(), offsetX, offsetY, cx, cy, altText, m_configuration.Border));
+            if (page.RelationshipId != null)
+            {
+                // blank pages (content:blank) have no picture
+                drawings.Add(PdfDrawings.CreatePageAnchor(page.RelationshipId, m_context.NextId(), offsetX, offsetY, cx, cy, altText, m_configuration.Border));
+            }
             if (overlayLines is { Count: > 0 })
             {
                 drawings.Add(PdfDrawings.CreateOverlay(m_context.NextId(), overlayLines, OpenXmlHelper.TwipsToEmu(group.WidthTwips), string.Join(Environment.NewLine, overlayLines)));
             }
-            return PdfDrawings.CreateAnchorParagraph(pageBreakBefore, drawings);
+            var markerText = PageTexts.MarkerText(m_configuration, description, m_context.Culture);
+            return PdfDrawings.CreateAnchorParagraph(pageBreakBefore, drawings, markerText);
         }
 
         /// <summary>

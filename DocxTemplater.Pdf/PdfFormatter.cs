@@ -13,7 +13,9 @@ namespace DocxTemplater.Pdf
     /// <summary>
     /// Inserts the pages of a PDF as pictures. Usage in the template: <c>{{ds.Contract}:pdf}</c>,
     /// <c>{{ds.Contract}:pdf(pages:'1-3,7', dpi:200)}</c>, <c>{{ds.FloorPlan}:pdf(fit:section)}</c> (true size on
-    /// pages of their own). The value is a <c>byte[]</c> or a <see cref="PdfFile"/>.
+    /// pages of their own), <c>{{ds.DataSheet}:pdf(content:blank, marker:'[[PDF|%key%|%page%|%pages%]]')}</c> (empty
+    /// pages of the PDF's page sizes with an invisible marker, to be replaced by the original pages after the export to
+    /// PDF). The value is a <c>byte[]</c> or a <see cref="PdfFile"/>.
     /// </summary>
     public class PdfFormatter : IFormatter
     {
@@ -39,11 +41,11 @@ namespace DocxTemplater.Pdf
 
         public void ApplyFormat(ITemplateProcessingContext templateContext, FormatterContext formatterContext, Text target)
         {
-            var (pdf, name) = formatterContext.Value switch
+            var (pdf, name, fileKey) = formatterContext.Value switch
             {
-                byte[] bytes => (bytes, null),
-                PdfFile file => (file.Content, file.Name),
-                _ => ((byte[])null, (string)null),
+                byte[] bytes => (bytes, null, null),
+                PdfFile file => (file.Content, file.Name, file.Key),
+                _ => ((byte[])null, (string)null, (string)null),
             };
             if (pdf == null)
             {
@@ -59,12 +61,18 @@ namespace DocxTemplater.Pdf
             var label = !string.IsNullOrWhiteSpace(configuration.Label) ? configuration.Label
                 : !string.IsNullOrWhiteSpace(name) ? name
                 : configuration.DefaultLabel;
+            var key = !string.IsNullOrWhiteSpace(configuration.Key) ? configuration.Key
+                : !string.IsNullOrWhiteSpace(fileKey) ? fileKey
+                : null;
+            var blank = configuration.Content == PdfContent.Blank;
+            // blank pages are always laid out in sections of their own
+            var useSections = blank || configuration.Fit == PdfFit.Section;
 
             if (target.GetFirstAncestor<Paragraph>() == null || PdfPlacement.IsInTextBox(target))
             {
                 throw new OpenXmlTemplateException($"pdf placeholder '{formatterContext.Placeholder}' must be in a paragraph of the document body, a table cell, a header or a footer - text boxes and shapes are not supported");
             }
-            if (configuration.Fit == PdfFit.Section)
+            if (useSections)
             {
                 // fail before rendering
                 SectionLayout.EnsureSupported(target);
@@ -94,14 +102,17 @@ namespace DocxTemplater.Pdf
                 throw new OpenXmlTemplateException($"PDF '{label}': {pageIndices.Count} pages selected, at most {configuration.MaxPages} are allowed (PdfFormatterConfiguration.MaxPages)");
             }
 
-            var pages = GetPages(part, pdf, password, label, pageIndices, pageSizes, configuration);
+            // blank pages: only the page sizes are needed, nothing is rendered or stored
+            var pages = blank
+                ? pageIndices.Select(x => new PlacedPage(x, pageSizes[x].WidthPoints, pageSizes[x].HeightPoints, null)).ToList()
+                : GetPages(part, pdf, password, label, pageIndices, pageSizes, configuration);
 
             var ids = m_lastIds.GetValue(part, _ => new StrongBox<uint>(0));
             var firstId = Math.Max(part.GetMaxDocPropertyId(), ids.Value) + 1;
-            var context = new PdfInsertContext(configuration, mainDocumentPart, label, pageSizes.Count, formatterContext.Culture, firstId,
+            var context = new PdfInsertContext(configuration, mainDocumentPart, label, key, pageSizes.Count, formatterContext.Culture, firstId,
                 () => GetEmptyHeaderFooter(mainDocumentPart));
 
-            if (configuration.Fit == PdfFit.Section)
+            if (useSections)
             {
                 SectionLayout.Insert(target, pages, context);
             }
@@ -111,7 +122,7 @@ namespace DocxTemplater.Pdf
             }
             ids.Value = Math.Max(ids.Value, context.LastId);
 
-            if (configuration.DisableImageCompression)
+            if (configuration.DisableImageCompression && !blank)
             {
                 DisableImageCompression(mainDocumentPart);
             }

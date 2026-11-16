@@ -11,6 +11,7 @@ namespace DocxTemplater.Pdf
     internal static class PdfArguments
     {
         private static readonly Regex KeyRegex = new(@"^\s*(?<key>[A-Za-z]+)\s*:(?<value>.*)$", RegexOptions.Singleline | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(500));
+        private static readonly Regex PercentTokenRegex = new(@"%(?<token>[A-Za-z]+)%", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(500));
         private static readonly Regex LengthRegex = new(@"^\s*(?<value>\d+(?:[.,]\d+)?)\s*(?<unit>cm|mm|in|pt|px)?\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(500));
 
         /// <summary>
@@ -87,6 +88,16 @@ namespace DocxTemplater.Pdf
                         break;
                     case "FIT":
                         result.Fit = ParseEnum<PdfFit>(key, value);
+                        break;
+                    case "CONTENT":
+                        result.Content = ParseEnum<PdfContent>(key, value);
+                        break;
+                    case "MARKER":
+                        // braces are not allowed in template arguments: tokens are written %page% there
+                        result.MarkerText = PercentTokenRegex.Replace(value, "{${token}}");
+                        break;
+                    case "KEY":
+                        result.Key = value;
                         break;
                     case "MARGIN":
                         result.SectionMarginTwips = (int)(ParseLengthEmu(key, value) / 635);

@@ -344,7 +344,7 @@ namespace DocxTemplater.Pdf.Test
         [Test]
         public void FormatterContextCultureIsUsedForNumbers()
         {
-            var tokens = PageTexts.CreateTokens(new PdfFormatterConfiguration(), new PageDescription("x", 1, 2, 2383.94, 1683.78, 0.664), CultureInfo.GetCultureInfo("de-CH"));
+            var tokens = PageTexts.CreateTokens(new PdfFormatterConfiguration(), new PageDescription("x", null, 1, 2, 2383.94, 1683.78, 0.664), CultureInfo.GetCultureInfo("de-CH"));
             Assert.That(tokens["width"], Is.EqualTo("841"));
             Assert.That(tokens["height"], Is.EqualTo("594"));
             Assert.That(tokens["sheet"], Is.EqualTo("A1"));

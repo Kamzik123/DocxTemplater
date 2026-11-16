@@ -242,8 +242,10 @@ namespace DocxTemplater.Pdf
 
         /// <summary>
         /// The tiny paragraph (1 pt) that holds anchored page pictures. Pages after the first of a section start with a page break.
+        /// <paramref name="markerText"/> (optional) is written into it as white 1 pt text: invisible, but exported to PDF
+        /// (unlike hidden text), so tools can find the page there.
         /// </summary>
-        public static Paragraph CreateAnchorParagraph(bool pageBreakBefore, IEnumerable<Drawing> drawings)
+        public static Paragraph CreateAnchorParagraph(bool pageBreakBefore, IEnumerable<Drawing> drawings, string markerText = null)
         {
             var properties = new ParagraphProperties
             {
@@ -258,6 +260,17 @@ namespace DocxTemplater.Pdf
             foreach (var drawing in drawings)
             {
                 paragraph.AppendChild(new Run(new RunProperties(new FontSize { Val = "2" }, new FontSizeComplexScript { Val = "2" }), drawing));
+            }
+            if (!string.IsNullOrEmpty(markerText))
+            {
+                paragraph.AppendChild(new Run(
+                    new RunProperties(
+                        new RunFonts { Ascii = "Arial", HighAnsi = "Arial", ComplexScript = "Arial", EastAsia = "Arial" },
+                        new NoProof(),
+                        new Color { Val = "FFFFFF" },
+                        new FontSize { Val = "2" },
+                        new FontSizeComplexScript { Val = "2" }),
+                    new Text(markerText) { Space = SpaceProcessingModeValues.Preserve }));
             }
             return paragraph;
         }

@@ -9,12 +9,13 @@ namespace DocxTemplater.Pdf
     /// A PDF page as it is described in alt texts and overlays.
     /// </summary>
     /// <param name="Name">Name of the PDF (label).</param>
+    /// <param name="Key">Stable id of the PDF; null to use the name.</param>
     /// <param name="Page">1-based page number in the PDF.</param>
     /// <param name="Pages">Page count of the PDF.</param>
     /// <param name="WidthPoints">Original page width.</param>
     /// <param name="HeightPoints">Original page height.</param>
     /// <param name="Scale">Displayed size / original size.</param>
-    internal sealed record PageDescription(string Name, int Page, int Pages, double WidthPoints, double HeightPoints, double Scale);
+    internal sealed record PageDescription(string Name, string Key, int Page, int Pages, double WidthPoints, double HeightPoints, double Scale);
 
     /// <summary>
     /// Fills the configurable text templates (alt text, overlay lines) with the tokens of a page.
@@ -22,6 +23,7 @@ namespace DocxTemplater.Pdf
     internal static class PageTexts
     {
         private static readonly Regex TokenRegex = new(@"\{(?<token>[A-Za-z]+)\}", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(500));
+        private static readonly Regex LineBreakRegex = new(@"\r\n|[\r\n\t\v\f\u0085  ]", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(500));
 
         // portrait sizes in mm
         private static readonly (string Name, double Width, double Height)[] Sheets =
@@ -73,6 +75,7 @@ namespace DocxTemplater.Pdf
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["name"] = page.Name,
+                ["key"] = page.Key ?? page.Name,
                 ["page"] = page.Page.ToString(culture),
                 ["pages"] = page.Pages.ToString(culture),
                 ["sheet"] = FindSheetName(page.WidthPoints, page.HeightPoints) ?? string.Empty,
@@ -86,6 +89,20 @@ namespace DocxTemplater.Pdf
         public static string AltText(PdfFormatterConfiguration configuration, PageDescription page, CultureInfo culture)
         {
             return Format(configuration.AltText, CreateTokens(configuration, page, culture));
+        }
+
+        /// <summary>
+        /// The replacement marker of a page on a single line, or null if there is none.
+        /// </summary>
+        public static string MarkerText(PdfFormatterConfiguration configuration, PageDescription page, CultureInfo culture)
+        {
+            if (string.IsNullOrWhiteSpace(configuration.MarkerText))
+            {
+                return null;
+            }
+            var text = Format(configuration.MarkerText, CreateTokens(configuration, page, culture));
+            text = LineBreakRegex.Replace(text, " ");
+            return string.IsNullOrWhiteSpace(text) ? null : text;
         }
 
         /// <summary>
