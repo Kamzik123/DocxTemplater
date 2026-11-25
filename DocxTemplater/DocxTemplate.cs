@@ -127,6 +127,8 @@ namespace DocxTemplater
                 RenderOrProcessNode(header.Header);
             }
             RenderOrProcessNode(m_wpDocument.MainDocumentPart.RootElement);
+            // sections are only removed once the content after the inserted documents is rendered
+            OpenXmlHelper.RemoveEmptySectionsAfterInsertedDocuments(m_wpDocument.MainDocumentPart.Document?.Body);
             foreach (var footer in m_wpDocument.MainDocumentPart.FooterParts.ToList())
             {
                 RenderOrProcessNode(footer.Footer);

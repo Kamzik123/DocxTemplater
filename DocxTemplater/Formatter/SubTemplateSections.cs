@@ -6,6 +6,14 @@ using System.Linq;
 namespace DocxTemplater.Formatter
 {
     /// <summary>
+    /// Marks the section break of a section of its own that ends a document inserted with the sub-template formatter.
+    /// Only kept in memory during <see cref="DocxTemplate.Process"/>.
+    /// </summary>
+    internal sealed class EndsInsertedDocumentAnnotation
+    {
+    }
+
+    /// <summary>
     /// Merges the section breaks of a document inserted with the sub-template formatter into the section of the host
     /// document that holds the placeholder.
     /// The page setup the inserted document has of its own is replaced by the host's - as for content without section
@@ -145,6 +153,36 @@ namespace DocxTemplater.Formatter
                 // the content after the last inserted section break continues the host section
                 OpenXmlHelper.RemoveSectionStartSettings(m_hostSection);
             }
+
+            if (m_replaced.Count > 0 && m_replaced[^1] == null)
+            {
+                // the inserted document ends with a section of its own (e.g. PDF pages with final:document): if the
+                // host has nothing more before its next section break, that host section would only add an empty
+                // page. Whether it does is only known once the host is rendered - see
+                // OpenXmlHelper.RemoveEmptySectionsAfterInsertedDocuments
+                var lastOwn = insertedElements.SelectMany(GetInnerSections).Last();
+                if (lastOwn.Parent?.Parent is Paragraph lastOwnParagraph && !HasContentAfter(lastOwnParagraph, insertedElements))
+                {
+                    lastOwn.AddAnnotation(new EndsInsertedDocumentAnnotation());
+                }
+            }
+        }
+
+        private static bool HasContentAfter(Paragraph paragraph, IReadOnlyList<OpenXmlElement> insertedElements)
+        {
+            for (var i = 0; i < insertedElements.Count; i++)
+            {
+                if (insertedElements[i] == paragraph)
+                {
+                    return insertedElements.Skip(i + 1).Any(OpenXmlHelper.HasVisibleContent);
+                }
+                if (paragraph.IsChildOf(insertedElements[i]))
+                {
+                    // nested in a block level content control: not the end of the document as a section of its own
+                    return true;
+                }
+            }
+            return true;
         }
 
         private static IEnumerable<SectionProperties> GetInnerSections(OpenXmlElement root)

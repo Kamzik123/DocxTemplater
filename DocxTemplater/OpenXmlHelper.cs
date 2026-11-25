@@ -783,6 +783,171 @@ namespace DocxTemplater
         }
 
 
+        /// <summary>
+        /// Returns true if the element shows anything on a page. Empty paragraphs, paragraphs holding only page,
+        /// column or line breaks, tabs and empty text, and bookmarks, permission and comment ranges and proofing
+        /// marks show nothing. Drawings, pictures, objects, fields, text with characters (also whitespace), content
+        /// controls, tables, alt chunks, note references and framed paragraphs are content.
+        /// </summary>
+        internal static bool HasVisibleContent(OpenXmlElement element)
+        {
+            switch (element)
+            {
+                case null:
+                    return false;
+                case Paragraph paragraph:
+                    if (paragraph.ParagraphProperties?.FrameProperties != null)
+                    {
+                        return true;
+                    }
+                    return paragraph.ChildElements.Any(x => x is not ParagraphProperties && HasVisibleInlineContent(x));
+                default:
+                    return HasVisibleInlineContent(element);
+            }
+        }
+
+        private static bool HasVisibleInlineContent(OpenXmlElement element)
+        {
+            switch (element)
+            {
+                case BookmarkStart or BookmarkEnd or ProofError or PermStart or PermEnd or CommentRangeStart or CommentRangeEnd:
+                    return false;
+                case Hyperlink hyperlink:
+                    return hyperlink.ChildElements.Any(HasVisibleInlineContent);
+                case Run run:
+                    return run.ChildElements.Any(x => x switch
+                    {
+                        RunProperties or LastRenderedPageBreak or TabChar => false,
+                        Text text => text.Text.Length > 0,
+                        // page, column and line breaks: nothing to show
+                        Break => false,
+                        _ => true,
+                    });
+                default:
+                    return true;
+            }
+        }
+
+        private static bool IsRangeMarker(OpenXmlElement element)
+        {
+            return element is BookmarkStart or BookmarkEnd or PermStart or PermEnd or CommentRangeStart or CommentRangeEnd;
+        }
+
+        /// <summary>
+        /// Removes the host section that directly follows a section of its own ending a document inserted with the
+        /// sub-template formatter (marked with <see cref="Formatter.EndsInsertedDocumentAnnotation"/>), if it has no
+        /// content: a section starts on a new page, so it would add an empty page with the host's header and footer.
+        /// Called after the document is rendered, when conditions and loops after the placeholder are resolved.
+        /// </summary>
+        internal static void RemoveEmptySectionsAfterInsertedDocuments(Body body)
+        {
+            if (body == null)
+            {
+                return;
+            }
+            var marked = body.Descendants<SectionProperties>()
+                .Where(x => x.Annotation<Formatter.EndsInsertedDocumentAnnotation>() != null)
+                .ToList();
+            foreach (var ownSection in marked)
+            {
+                ownSection.RemoveAnnotations<Formatter.EndsInsertedDocumentAnnotation>();
+                if (ownSection.Parent?.Parent is not Paragraph ownParagraph || ownParagraph.Parent != body)
+                {
+                    continue;
+                }
+                RemoveEmptySectionAfter(body, ownParagraph, ownSection);
+            }
+        }
+
+        private static void RemoveEmptySectionAfter(Body body, Paragraph ownParagraph, SectionProperties ownSection)
+        {
+            // the elements of the next section: up to and including its section break, or up to the body section
+            var walked = new List<OpenXmlElement>();
+            Paragraph nextSectionParagraph = null;
+            for (var current = ownParagraph.NextSibling(); current is not null and not SectionProperties; current = current.NextSibling())
+            {
+                if (HasVisibleContent(current))
+                {
+                    // the host content continues on a new page
+                    return;
+                }
+                walked.Add(current);
+                if (current is Paragraph { ParagraphProperties.SectionProperties: not null } paragraph)
+                {
+                    nextSectionParagraph = paragraph;
+                    break;
+                }
+            }
+
+            // a bookmark (or permission / comment range) starting or ending in the removed part keeps its pair
+            var markers = walked.SelectMany(x => IsRangeMarker(x) ? [x] : x.Descendants().Where(IsRangeMarker)).ToList();
+            foreach (var marker in markers)
+            {
+                marker.Remove();
+                ownParagraph.AppendChild(marker);
+            }
+
+            if (nextSectionParagraph != null)
+            {
+                var removedSection = nextSectionParagraph.ParagraphProperties.SectionProperties;
+                var followingSection = nextSectionParagraph.NextSibling()?.GetSectionProperties() ?? body.Elements<SectionProperties>().LastOrDefault();
+                if (followingSection != null)
+                {
+                    // Word takes a header / footer type a section does not define from the previous section - the
+                    // following section used to inherit from the removed one, not from the section of its own
+                    CopyMissingReferences<HeaderReference>(removedSection, followingSection, x => x.Type?.Value ?? HeaderFooterValues.Default);
+                    CopyMissingReferences<FooterReference>(removedSection, followingSection, x => x.Type?.Value ?? HeaderFooterValues.Default);
+                }
+                foreach (var element in walked)
+                {
+                    element.Remove();
+                }
+                return;
+            }
+
+            // the host has nothing after the inserted document: the section of its own becomes the last section of
+            // the document, as if the document had not been inserted
+            foreach (var element in walked)
+            {
+                element.Remove();
+            }
+            ownSection.Remove();
+            var bodySection = body.Elements<SectionProperties>().LastOrDefault();
+            if (bodySection != null)
+            {
+                bodySection.InsertBeforeSelf(ownSection);
+                bodySection.Remove();
+            }
+            else
+            {
+                body.AppendChild(ownSection);
+            }
+        }
+
+        private static void CopyMissingReferences<T>(SectionProperties source, SectionProperties target, Func<T, HeaderFooterValues> getType)
+            where T : OpenXmlElement
+        {
+            var existing = target.Elements<T>().Select(getType).ToHashSet();
+            foreach (var reference in source.Elements<T>().Where(x => !existing.Contains(getType(x))))
+            {
+                var copy = (T)reference.CloneNode(true);
+                // header and footer references come first in a sectPr, headers before footers
+                OpenXmlElement after = target.Elements<T>().LastOrDefault();
+                if (after == null && copy is FooterReference)
+                {
+                    after = target.Elements<HeaderReference>().LastOrDefault();
+                }
+                if (after != null)
+                {
+                    after.InsertAfterSelf(copy);
+                }
+                else
+                {
+                    target.PrependChild(copy);
+                }
+            }
+        }
+
         public static int LengthToEmu(int value, string unit)
         {
             return unit switch

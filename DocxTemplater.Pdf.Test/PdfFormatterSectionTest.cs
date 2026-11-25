@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
@@ -432,6 +432,128 @@ namespace DocxTemplater.Pdf.Test
             var sections = DescribeSections(body);
             Assert.That(sections[1], Does.StartWith("A3L: [plan]"));
             Assert.That(sections[^1], Does.StartWith("A4").And.Contain("More text"), string.Join(Environment.NewLine, sections));
+        }
+
+        [TestCase("fit:section, same:section")]
+        [TestCase("content:blank")]
+        public void FinalDocumentInsertedBeforeEmptyHostSectionAddsNoPage(string arguments)
+        {
+            var appendix = RenderAppendix(arguments);
+            var hostSection = A4Section(new FooterReference { Type = HeaderFooterValues.Default, Id = "rIdFooter" });
+            var (body, _) = Render(new Body(P("Cover"), P("{{ds}:T('ds.Appendix')}"), P(""), new Paragraph(new Run(new Break { Type = BreakValues.Page })),
+                    PWithSection("", hostSection), P("Back cover"), A4Section()),
+                new { Appendix = appendix },
+                setup: AddFooters);
+
+            var described = DescribeSections(body);
+            Assert.That(described.Select(x => x.Split(':')[0]), Is.EqualTo(["A4", "A3L", "A4"]), string.Join(Environment.NewLine, described));
+            Assert.That(described[0], Does.EndWith("Cover | Intro"));
+            Assert.That(described[2], Is.EqualTo("A4: Back cover"));
+            var backCover = GetSections(body)[2].Section;
+            Assert.That(backCover.Elements<FooterReference>().Select(x => x.Id.Value), Is.EqualTo(["rIdFooter"]), "the back cover inherited the host footer from the removed section");
+        }
+
+        [Test]
+        public void FinalDocumentInsertedBeforeHostContentKeepsTheHostSection()
+        {
+            var appendix = RenderAppendix("fit:section");
+            var (body, _) = Render(new Body(P("Cover"), P("{{ds}:T('ds.Appendix')}"), P(""), P("After"), PWithSection("", A4Section()), P("Back cover"), A4Section()),
+                new { Appendix = appendix });
+
+            var described = DescribeSections(body);
+            Assert.That(described.Select(x => x.Split(':')[0]), Is.EqualTo(["A4", "A3L", "A4", "A4"]), string.Join(Environment.NewLine, described));
+            Assert.That(described[2], Does.Contain("After"));
+            Assert.That(described[3], Is.EqualTo("A4: Back cover"));
+        }
+
+        [Test]
+        public void FinalDocumentInsertedAtTheEndOfTheHostBecomesTheLastSection()
+        {
+            var appendix = RenderAppendix("fit:section");
+            var (body, _) = Render(new Body(P("Cover"), P("{{ds}:T('ds.Appendix')}"), P(""), A4Section()), new { Appendix = appendix });
+
+            var described = DescribeSections(body);
+            Assert.That(described.Select(x => x.Split(':')[0]), Is.EqualTo(["A4", "A3L"]), string.Join(Environment.NewLine, described));
+            Assert.That(body.LastChild, Is.InstanceOf<SectionProperties>());
+            Assert.That(PageSizeName((SectionProperties)body.LastChild), Is.EqualTo("A3L"));
+            Assert.That(body.Elements<Paragraph>().Last().ParagraphProperties?.SectionProperties, Is.Null);
+        }
+
+        [Test]
+        public void BookmarksOfTheRemovedSectionKeepTheirPair()
+        {
+            var appendix = RenderAppendix("fit:section");
+            var cover = P("Cover");
+            cover.AppendChild(new BookmarkStart { Id = "7", Name = "Span" });
+            var removed = new Paragraph(new BookmarkEnd { Id = "7" }, new BookmarkStart { Id = "8", Name = "Host" });
+            var (body, _) = Render(new Body(cover, P("{{ds}:T('ds.Appendix')}"), removed, PWithSection("", A4Section()), P("Back cover"), new BookmarkEnd { Id = "8" }, A4Section()),
+                new { Appendix = appendix });
+
+            Assert.That(DescribeSections(body).Select(x => x.Split(':')[0]), Is.EqualTo(["A4", "A3L", "A4"]));
+            var planParagraph = GetSections(body)[1].Section.Parent.Parent;
+            Assert.That(planParagraph.Elements<BookmarkStart>().Select(x => x.Name.Value), Is.EqualTo(["Host"]));
+            Assert.That(planParagraph.Elements<BookmarkEnd>().Count(), Is.EqualTo(1));
+            var starts = body.Descendants<BookmarkStart>().ToList();
+            Assert.That(starts.Select(x => x.Name.Value), Is.EquivalentTo(["Span", "Host"]));
+            Assert.That(body.Descendants<BookmarkEnd>().Select(x => x.Id.Value), Is.EquivalentTo(starts.Select(x => x.Id.Value)));
+        }
+
+        [Test]
+        public void HeaderAndFooterTypesOnlyTheRemovedSectionHadAreInherited()
+        {
+            var appendix = RenderAppendix("fit:section");
+            var hostSection = A4Section(new FooterReference { Type = HeaderFooterValues.Default, Id = "rIdFooter" }, new FooterReference { Type = HeaderFooterValues.Even, Id = "rIdEven" });
+            var backSection = A4Section(new FooterReference { Type = HeaderFooterValues.Default, Id = "rIdBack" });
+            var (body, _) = Render(new Body(P("Cover"), P("{{ds}:T('ds.Appendix')}"), PWithSection("", hostSection), P("Back cover"), backSection),
+                new { Appendix = appendix },
+                setup: AddFooters);
+
+            var backCover = GetSections(body)[^1].Section;
+            Assert.That(backCover.Elements<FooterReference>().Select(x => (x.Type.Value, x.Id.Value)),
+                Is.EqualTo([(HeaderFooterValues.Default, "rIdBack"), (HeaderFooterValues.Even, "rIdEven")]));
+        }
+
+        [Test]
+        public void FinalPdfInsertedBeforeEmptyHostSectionIsUnchanged()
+        {
+            var appendix = RenderAppendix("fit:section", finalArgument: "final:pdf");
+            var (body, _) = Render(new Body(P("Cover"), P("{{ds}:T('ds.Appendix')}"), P(""), PWithSection("", A4Section()), P("Back cover"), A4Section()),
+                new { Appendix = appendix });
+
+            var described = DescribeSections(body);
+            // the plan section is the body sectPr of the inserted document and replaced by the host's: nothing is marked
+            Assert.That(described.Select(x => x.Split(':')[0]), Is.EqualTo(["A4", "A4", "A4", "A4"]), string.Join(Environment.NewLine, described));
+            Assert.That(described[^1], Is.EqualTo("A4: Back cover"));
+        }
+
+        [Test]
+        public void ConditionRenderedEmptyAfterTheInsertedDocumentRemovesTheHostSection()
+        {
+            var appendix = RenderAppendix("fit:section");
+            var (body, _) = Render(new Body(P("Cover"), P("{{ds}:T('ds.Appendix')}"), P("{?{ds.Show}}"), P("After"), P("{{/}}"), PWithSection("", A4Section()), P("Back cover"), A4Section()),
+                new { Appendix = appendix, Show = false });
+
+            var described = DescribeSections(body);
+            Assert.That(described.Select(x => x.Split(':')[0]), Is.EqualTo(["A4", "A3L", "A4"]), string.Join(Environment.NewLine, described));
+            Assert.That(described[2], Is.EqualTo("A4: Back cover"));
+        }
+
+        private static byte[] RenderAppendix(string arguments, string finalArgument = "final:document")
+        {
+            var (_, appendix) = Render(new Body(P("Intro"), P($"{{{{ds.Plan}}:pdf({arguments}, {finalArgument})}}"), A4Section()), new { Plan = A3Landscape });
+            using var stream = new MemoryStream();
+            using (appendix.Clone(stream))
+            {
+            }
+            appendix.Dispose();
+            return stream.ToArray();
+        }
+
+        private static void AddFooters(WordprocessingDocument document)
+        {
+            document.MainDocumentPart.AddNewPart<FooterPart>("rIdFooter").Footer = new Footer(P("Host footer"));
+            document.MainDocumentPart.AddNewPart<FooterPart>("rIdEven").Footer = new Footer(P("Even footer"));
+            document.MainDocumentPart.AddNewPart<FooterPart>("rIdBack").Footer = new Footer(P("Back footer"));
         }
     }
 }
