@@ -92,6 +92,26 @@ namespace DocxTemplater.Pdf
         Blank,
     }
 
+    /// <summary>
+    /// Which page setup the last section of the document has if <see cref="PdfFit.Section"/> or
+    /// <see cref="PdfContent.Blank"/> pages are the last content of the document.
+    /// </summary>
+    public enum PdfFinalSection
+    {
+        /// <summary>
+        /// The section of the last pages becomes the last section of the document, so no empty page follows them.
+        /// </summary>
+        Pdf,
+
+        /// <summary>
+        /// The pages end with a section break of their own and the document's page setup stays the last section,
+        /// without content. For documents inserted into another one with the sub-template formatter (<c>:T()</c>):
+        /// it replaces the last section of the inserted document with the host section and would drop the page
+        /// setup of the pages otherwise. Opened directly, Word shows an empty page at the end.
+        /// </summary>
+        Document,
+    }
+
     public class PdfFormatterConfiguration
     {
         /// <summary>
@@ -217,6 +237,12 @@ namespace DocxTemplater.Pdf
 
         /// <summary>PDF pages with the page size of the current section and <see cref="PdfFit.Section"/>. Template argument <c>same</c>.</summary>
         public PdfSamePageSize SamePageSize { get; set; } = PdfSamePageSize.Inline;
+
+        /// <summary>
+        /// Last section of the document if pages in a section of their own are its last content. Template argument
+        /// <c>final</c> (<c>pdf</c>, <c>document</c>).
+        /// </summary>
+        public PdfFinalSection FinalSection { get; set; } = PdfFinalSection.Pdf;
 
         /// <summary>Largest page width or height of a section in twips, see <see cref="WordMaxPageSizeTwips"/>.</summary>
         public int MaxPageSizeTwips { get; set; } = WordMaxPageSizeTwips;

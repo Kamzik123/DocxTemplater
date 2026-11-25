@@ -17,7 +17,8 @@ namespace DocxTemplater.Pdf
     /// <c>w:body/w:sectPr</c>). So the content before the pages ends with a copy of the section properties that
     /// govern the placeholder, each group of pages ends with its own section properties, and the original section
     /// properties keep governing the content after the pages. If nothing follows the pages in their section, the
-    /// last group takes the place of the original section properties instead - otherwise an empty page would follow.
+    /// last group takes the place of the original section properties instead - otherwise an empty page would follow
+    /// (except with <c>final:document</c> at the end of the document, for documents inserted with <c>:T()</c>).
     /// Loops render their items last to first, so a placeholder may be followed by pages of a later item that are
     /// already laid out: section properties created here are annotated with the page setup of the document.
     /// </remarks>
@@ -152,7 +153,8 @@ namespace DocxTemplater.Pdf
                     lastParagraph.ParagraphProperties.SectionProperties = governing;
                 }
             }
-            else if (after == null && lastIsSection && IsNothingAfter(paragraph, holder))
+            else if (after == null && lastIsSection && IsNothingAfter(paragraph, holder)
+                     && (holder != null || m_configuration.FinalSection == PdfFinalSection.Pdf))
             {
                 // the pages are the last thing in the section - their section properties take the place of the
                 // original ones, otherwise an empty page with the original setup would follow
@@ -171,7 +173,9 @@ namespace DocxTemplater.Pdf
             }
             else
             {
-                // the original section properties govern the content after the pages - it continues the section
+                // the original section properties govern the content after the pages - it continues the section.
+                // With final:document this may be no content at all: the document's page setup stays the last
+                // section, so :T() replaces that one with the host section instead of the section of the pages
                 OpenXmlHelper.RemoveSectionStartSettings(governing);
             }
 

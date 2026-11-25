@@ -358,6 +358,72 @@ namespace DocxTemplater.Pdf.Test
         }
 
         [Test]
+        public void FinalDocumentKeepsThePageSetupOfTheDocumentAsLastSection()
+        {
+            var (body, _) = Render(new Body(P("Appendix"), P("{{ds.Plan}:pdf(fit:section, final:document)}"), A4Section()), new { Plan = A3Landscape });
+
+            Assert.That(DescribeSections(body), Is.EqualTo(["A4: Appendix", "A3L: [plan]", "A4: "]));
+            Assert.That(body.LastChild, Is.InstanceOf<SectionProperties>());
+        }
+
+        [Test]
+        public void FinalDocumentDoesNotChangePagesFollowedByContent()
+        {
+            var (body, _) = Render(new Body(P("Appendix"), P("{{ds.Plan}:pdf(fit:section, final:document)}"), P("After"), A4Section()), new { Plan = A3Landscape });
+
+            Assert.That(DescribeSections(body), Is.EqualTo(["A4: Appendix", "A3L: [plan]", "A4: After"]));
+        }
+
+        [Test]
+        public void FinalDocumentDoesNotAddAnEmptySectionInsideTheDocument()
+        {
+            var (body, _) = Render(new Body(P("Appendix"), P("{{ds.Plan}:pdf(fit:section, final:document)}"), PWithSection("", A4Section()), P("Next"), A4Section()),
+                new { Plan = A3Landscape });
+
+            Assert.That(DescribeSections(body), Is.EqualTo(["A4: Appendix", "A3L: [plan] | ", "A4: Next"]));
+        }
+
+        [Test]
+        public void FinalDocumentWithPlansInALoopAtTheEndOfTheDocument()
+        {
+            var (body, _) = Render(new Body(P("Plans"), P("{{#ds.Plans}}"), P("{{.}:pdf(fit:section, final:document)}"), P("{{/ds.Plans}}"), A4Section()),
+                new { Plans = new[] { A3Landscape, A3Landscape } });
+
+            var sections = DescribeSections(body);
+            Assert.That(sections.Count(x => x.StartsWith("A3L: [plan]", StringComparison.Ordinal)), Is.EqualTo(2), string.Join(Environment.NewLine, sections));
+            Assert.That(sections[^1], Does.StartWith("A4"), string.Join(Environment.NewLine, sections));
+            Assert.That(sections[^1], Does.Not.Contain("[plan]"));
+        }
+
+        [TestCase("fit:section, same:section, overlay:always")]
+        [TestCase("content:blank")]
+        public void DocumentEndingWithPlansInsertedAsSubTemplateKeepsThePlanSection(string arguments)
+        {
+            var (_, appendix) = Render(new Body(P("Intro"), P($"{{{{ds.Plan}}:pdf({arguments}, final:document, marker:'[[PDF|%page%]]')}}"), A4Section()),
+                new { Plan = A3Landscape });
+            byte[] appendixBytes;
+            using (var stream = new MemoryStream())
+            {
+                using (appendix.Clone(stream))
+                {
+                }
+                appendixBytes = stream.ToArray();
+            }
+            appendix.Dispose();
+
+            var (body, _) = Render(new Body(P("Cover"), P("{{ds}:T('ds.Appendix')}"), P("Back cover"), A4Section()), new { Appendix = appendixBytes });
+
+            var sections = GetSections(body);
+            var described = DescribeSections(body);
+            Assert.That(described.Select(x => x.Split(':')[0]), Is.EqualTo(["A4", "A3L", "A4"]), string.Join(Environment.NewLine, described));
+            Assert.That(described[0], Does.EndWith("Cover | Intro"));
+            Assert.That(described[2], Does.EndWith("Back cover"));
+            Assert.That(sections[1].Content.Single(), Does.Contain("[[PDF|1]]"));
+            var margin = sections[1].Section.GetFirstChild<PageMargin>();
+            Assert.That(new long[] { margin.Top.Value, margin.Bottom.Value, margin.Left.Value, margin.Right.Value }, Is.All.EqualTo(0));
+        }
+
+        [Test]
         public void ConditionAfterThePlanCanStillAddContent()
         {
             var (body, _) = Render(new Body(P("Intro"), P("{{ds.Plan}:pdf(fit:section)}"), P("{?{ds.More}}"), P("More text"), P("{{/}}"), A4Section()),

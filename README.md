@@ -628,6 +628,7 @@ template.BindModel("ds", new
 | `oversize` | `scale`, `error` | `scale` | `fit:section` only: pages larger than Word allows |
 | `overlay` | `auto`, `always`, `never` | `auto` | `fit:section` only: placeholder overlay on scaled pages, on every page, or never |
 | `same` | `inline`, `section` | `inline` | `fit:section` only: PDF pages with the document's page size stay in the text flow, or also get their own section |
+| `final` | `pdf`, `document` | `pdf` | `fit:section` / `content:blank` at the end of the document: the last section has the page setup of the PDF pages, or the document's. Use `document` for documents inserted with `:T()`, see below |
 | `content` | `render`, `blank` | `render` | `blank`: empty pages instead of pictures, see below |
 | `marker` | text | - | Invisible text on every page in a section of its own, to find it in the exported PDF. Tokens are written `%page%` here |
 | `key` | text | `PdfFile.Key`, else the label | Stable id of the PDF for the token `{key}` |
@@ -644,6 +645,8 @@ Word supports pages up to 22 inches (558.8 mm), so A2 and larger sheets don't fi
 3. Replace each plan page with the matching page of the original plan PDF (e.g. Acrobat *Organize Pages → Replace*). The original vector page keeps its own size, and the page count and numbering stay correct.
 
 `overlay:always` puts the overlay on every plan page, so a forgotten swap is visible in the final PDF. To print to scale, use a printer with the right paper size and turn off "fit to page" in the print dialog.
+
+If the plan pages are the last content of the document, their section becomes the last section of the document, so no empty page follows them. A document that is inserted into another one with the [Sub-Template Formatter](#sub-template-formatter---inserting-documents) needs `final:document` instead: `:T()` replaces the last section of the inserted document with the host section, and without it the plan pages would get the host's page size, margins, header and footer. With `final:document` the plan pages end with a section break of their own, and the document's page setup stays the last section, without content. When the document is inserted, `:T()` replaces that empty section, and the host's content after the placeholder continues on a new page. When the document is opened on its own, Word shows an empty page at the end.
 
 #### Empty pages to replace after the export: `content:blank`
 
@@ -711,7 +714,7 @@ The value in front of the formatter (here `ds`) is bound as `ds` *inside* the in
 
 **_NOTE:_** The content is inserted by copying the OpenXML body elements into the host document. Images, links and other parts the content references are copied along. The paragraph, character and table styles it uses are copied too, unless the host document already has a style with the same id (the host's style wins). The inserted document's default paragraph style ("Normal") is replaced by the host's. Numbering definitions (list numbering) are copied with new ids, so inserted lists keep their own format and don't continue a list of the host document. Picture bullets are not imported.
 
-**_Section breaks:_** The inserted content takes the page setup, headers and footers of the host section that holds the placeholder. If the inserted document has section breaks, the sections with its own page setup are replaced by the host's. Sections with a different setup are kept, together with their headers and footers. Examples are the plan pages of [`fit:section`](#true-size-pages-plans-fitsection) and a landscape section. The host section continues around them. Only the part before the inserted content keeps the host's different first page and page number restart. In a table cell, section breaks aren't possible, so they are removed and the content takes the section of the table.
+**_Section breaks:_** The inserted content takes the page setup, headers and footers of the host section that holds the placeholder. If the inserted document has section breaks, the sections with its own page setup are replaced by the host's. Sections with a different setup are kept, together with their headers and footers. Examples are the plan pages of [`fit:section`](#true-size-pages-plans-fitsection) (with `final:document` if they end the inserted document) and a landscape section. The host section continues around them. Only the part before the inserted content keeps the host's different first page and page number restart. In a table cell, section breaks aren't possible, so they are removed and the content takes the section of the table.
 
 ### Inserting sub-template as Inline Content
 

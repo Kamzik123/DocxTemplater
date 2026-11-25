@@ -119,6 +119,9 @@ namespace DocxTemplater.Pdf
                     case "SAME":
                         result.SamePageSize = ParseEnum<PdfSamePageSize>(key, value);
                         break;
+                    case "FINAL":
+                        result.FinalSection = ParseEnum<PdfFinalSection>(key, value);
+                        break;
                     case "W":
                         result.MaxWidthEmu = ParseLengthEmu(key, value);
                         break;
